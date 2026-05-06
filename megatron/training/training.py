@@ -3008,6 +3008,7 @@ def train(
 
     # Run training iterations till done.
     buffered_rollouts = None
+    print(f"[pretrain] entering loop iteration={iteration} train_iters={args.train_iters}", flush=True)
     while iteration < args.train_iters:
         if (args.profile 
             and (len(args.profile_ranks) == 0 or
