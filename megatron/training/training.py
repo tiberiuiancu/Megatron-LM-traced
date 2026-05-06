@@ -3777,7 +3777,11 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
             if not args.multiple_validation_sets:
                 assert len(valid_dataloaders) == 1
             test_dataloader = build_pretraining_data_loader(test_ds, 0)
-            do_train = train_dataloader is not None and (args.skip_train or args.train_iters > 0)
+            if args.fake_process_group:
+                # Trace generation: no real dataloader needed, forward step handles mock data.
+                do_train = not args.skip_train and args.train_iters > 0
+            else:
+                do_train = train_dataloader is not None and (args.skip_train or args.train_iters > 0)
             do_valid = valid_dataloaders is not None and (args.full_validation or args.eval_iters > 0)
             do_test = test_dataloader is not None and (args.full_validation or args.eval_iters > 0)
 
