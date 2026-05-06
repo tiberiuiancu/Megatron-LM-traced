@@ -48,6 +48,8 @@ from typing import Any, Optional, Dict
 
 import torch.distributed
 
+from megatron.core.instrumentation import get_tracer, set_tracer
+from megatron.core.instrumentation.tracer import CudaEventTracer, serialize_trace
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import get_canonical_lr_for_logging
 from .log_handler import CustomHandler
@@ -909,6 +911,9 @@ def pretrain(
 
     args = get_args()
     timers = get_timers()
+
+    if getattr(args, 'fake_process_group', False):
+        set_tracer(CudaEventTracer())
 
     if args.fine_grained_activation_offloading:
         from megatron.core.pipeline_parallel.utils import (
@@ -1825,6 +1830,10 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
     """Single training step."""
     args = get_args()
     timers = get_timers()
+    tracer = get_tracer()
+    trace_enabled = tracer is not None and getattr(args, 'fake_process_group', False)
+    if trace_enabled:
+        tracer.start_iteration()
 
     rerun_state_machine = get_rerun_state_machine()
     save_params_in_this_iteration = (args.save_params_interval is not None and
@@ -1837,6 +1846,12 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                                      (iteration + 1) % args.save_wgrads_interval == 0)
     save_dgrads_in_this_iteration = (args.save_dgrads_interval is not None and
                                      (iteration + 1) % args.save_dgrads_interval == 0)
+
+    def _finish_and_save_trace():
+        if trace_enabled:
+            trace = tracer.finish_iteration()
+            _save_trace(trace, args)
+
     while rerun_state_machine.should_run_forward_backward(data_iterator):
         # Set grad to zero.
         for model_chunk in model:
@@ -1926,6 +1941,7 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
 
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
+        _finish_and_save_trace()
         return {}, True, should_checkpoint, should_exit, exit_code, None, None, 0
 
     # Empty unused memory.
@@ -2001,6 +2017,7 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                 loss_reduced[key] = val
             else:
                 raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+        _finish_and_save_trace()
         return (
             loss_reduced,
             skipped_iter,
@@ -2011,7 +2028,15 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
             num_zeros_in_grad,
             log_max_attention_logit,
         )
+    _finish_and_save_trace()
     return {}, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad, log_max_attention_logit
+
+
+def _save_trace(trace, args):
+    stage = getattr(args, 'pipeline_model_parallel_rank', 0)
+    out_dir = getattr(args, 'trace_dir', './traces')
+    path = os.path.join(out_dir, f'trace_pp_stage_{stage}.json')
+    serialize_trace(trace, path)
 
 
 def training_log(
@@ -3701,7 +3726,7 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
     is_distributed = getattr(build_train_valid_test_datasets_provider, "is_distributed", False)
 
     # Construct the data pipeline
-    if is_distributed or mpu.get_tensor_model_parallel_rank() == 0:
+    if is_distributed or mpu.get_tensor_model_parallel_rank() == 0 or args.fake_process_group:
 
         # Build datasets and dataloders.
         if args.perform_rl_step:
