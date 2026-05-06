@@ -6,12 +6,42 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 
+from megatron.core.instrumentation import get_tracer
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import nvtx_decorator
 
 # Types
 Shape = Union[List[int], torch.Size]
+
+
+def _tensor_bytes(tensor: torch.Tensor) -> int:
+    return tensor.numel() * tensor.element_size()
+
+
+def _shape_bytes(shape: Shape, dtype: torch.dtype) -> int:
+    dtype_bytes = torch.tensor([], dtype=dtype).element_size()
+    numel = 1
+    for dim in shape:
+        numel *= int(dim)
+    return numel * dtype_bytes
+
+
+def _record_pp_collective(
+    *,
+    name: str,
+    collective_type: str,
+    bytes: int,
+    group_ranks: list[int],
+):
+    tracer = get_tracer()
+    if tracer is not None:
+        tracer.record_collective(
+            name=name,
+            collective_type=collective_type,
+            bytes=bytes,
+            group_ranks=group_ranks,
+        )
 
 
 def _batched_p2p_ops(
@@ -431,12 +461,19 @@ class P2PCommunicator:
             tensor_shapes = [tensor_shapes]
         input_tensors = []
         config = self.config
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         for tensor_shape in tensor_shapes:
             if is_first_stage:
                 input_tensor = None
             else:
                 if config.timers is not None:
                     config.timers('forward-recv', log_level=2).start()
+                _record_pp_collective(
+                    name='recv_forward',
+                    collective_type='PP_Recv',
+                    bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                    group_ranks=[self.prev_rank, current_rank],
+                )
                 input_tensor, _, _ = self._communicate(
                     tensor_send_next=None,
                     tensor_send_prev=None,
@@ -461,6 +498,7 @@ class P2PCommunicator:
             unwrap_tensor_shapes = True
             tensor_shapes = [tensor_shapes]
         config = self.config
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         output_tensor_grads = []
         for tensor_shape in tensor_shapes:
             if is_last_stage:
@@ -468,6 +506,12 @@ class P2PCommunicator:
             else:
                 if config.timers is not None:
                     config.timers('backward-recv', log_level=2).start()
+                _record_pp_collective(
+                    name='recv_backward',
+                    collective_type='PP_Recv',
+                    bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                    group_ranks=[current_rank, self.next_rank],
+                )
                 _, output_tensor_grad, _ = self._communicate(
                     tensor_send_next=None,
                     tensor_send_prev=None,
@@ -489,10 +533,17 @@ class P2PCommunicator:
         if not isinstance(output_tensors, list):
             output_tensors = [output_tensors]
 
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         for output_tensor in output_tensors:
             if not is_last_stage:
                 if config.timers is not None:
                     config.timers('forward-send', log_level=2).start()
+                _record_pp_collective(
+                    name='send_forward',
+                    collective_type='PP_Send',
+                    bytes=_tensor_bytes(output_tensor),
+                    group_ranks=[current_rank, self.next_rank],
+                )
                 self._communicate(
                     tensor_send_next=output_tensor,
                     tensor_send_prev=None,
@@ -509,10 +560,17 @@ class P2PCommunicator:
         if not isinstance(input_tensor_grads, list):
             input_tensor_grads = [input_tensor_grads]
         config = self.config
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         for input_tensor_grad in input_tensor_grads:
             if not is_first_stage:
                 if config.timers is not None:
                     config.timers('backward-send', log_level=2).start()
+                _record_pp_collective(
+                    name='send_backward',
+                    collective_type='PP_Send',
+                    bytes=_tensor_bytes(input_tensor_grad),
+                    group_ranks=[self.prev_rank, current_rank],
+                )
                 self._communicate(
                     tensor_send_next=None,
                     tensor_send_prev=input_tensor_grad,

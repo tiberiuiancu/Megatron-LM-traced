@@ -6,6 +6,8 @@ from typing import Optional
 
 import torch
 
+from megatron.core.instrumentation import get_tracer
+
 from ..config_logger import has_config_logger_enabled, log_config_to_disk
 from ..fp8_utils import is_float8tensor, post_all_gather_processing
 from ..optimizer.param_layout import FullParamLayout
@@ -18,6 +20,32 @@ from .distributed_data_parallel_config import DistributedDataParallelConfig
 from .param_and_grad_buffer import _ParamAndGradBuffer, group_params_for_buffers, partition_buckets
 
 logger = logging.getLogger(__name__)
+
+
+def _group_ranks(group):
+    if hasattr(group, "ranks"):
+        ranks = group.ranks
+        return list(ranks() if callable(ranks) else ranks)
+
+    get_process_group_ranks = getattr(torch.distributed, "get_process_group_ranks", None)
+    if get_process_group_ranks is not None:
+        try:
+            return list(get_process_group_ranks(group))
+        except Exception:
+            pass
+
+    return list(range(torch.distributed.get_world_size(group)))
+
+
+def _record_collective(name: str, collective_type: str, num_bytes: int, group) -> None:
+    tracer = get_tracer()
+    if tracer is not None:
+        tracer.record_collective(
+            name=name,
+            collective_type=collective_type,
+            bytes=num_bytes,
+            group_ranks=_group_ranks(group),
+        )
 
 
 class DistributedDataParallel(_BaseDataParallel):
@@ -483,6 +511,20 @@ class DistributedDataParallel(_BaseDataParallel):
                 return
 
         for bucket_group in self.bucket_groups + self.expert_parallel_bucket_groups:
+            communication_group = getattr(
+                bucket_group, "intra_distributed_optimizer_instance_group", None
+            )
+            if communication_group is None:
+                communication_group = bucket_group.data_parallel_group
+            _record_collective(
+                name="DistributedDataParallel.start_param_sync",
+                collective_type="AllGather",
+                num_bytes=sum(
+                    bucket.param_data.numel() * bucket.param_data.element_size()
+                    for bucket in bucket_group.buckets
+                ),
+                group=communication_group,
+            )
             bucket_group.start_param_sync(force_sync=force_sync)
 
             if not self.ddp_config.overlap_param_gather:
@@ -531,6 +573,24 @@ class DistributedDataParallel(_BaseDataParallel):
         communication ops.
         """
         for bucket_group in self.bucket_groups + self.expert_parallel_bucket_groups:
+            communication_group = getattr(
+                bucket_group, "intra_distributed_optimizer_instance_group", None
+            )
+            if communication_group is None:
+                communication_group = bucket_group.data_parallel_group
+            _record_collective(
+                name="DistributedDataParallel.start_grad_sync",
+                collective_type=(
+                    "ReduceScatter"
+                    if self.ddp_config.use_distributed_optimizer and not force_all_reduce
+                    else "AllReduce"
+                ),
+                num_bytes=sum(
+                    bucket.grad_data.numel() * bucket.grad_data.element_size()
+                    for bucket in bucket_group.buckets
+                ),
+                group=communication_group,
+            )
             bucket_group.start_grad_sync()
 
     def finish_grad_sync(self, force_all_reduce: Optional[bool] = False):

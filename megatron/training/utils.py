@@ -532,7 +532,7 @@ def get_batch_on_this_tp_rank(data_iterator, mtp_on_this_rank: bool = False):
                 group=mpu.get_tensor_model_parallel_group(),
             )
 
-    if mpu.get_tensor_model_parallel_rank() == 0:
+    if mpu.get_tensor_model_parallel_rank() == 0 or args.fake_process_group:
 
         assert data_iterator is not None
         data = next(data_iterator)

@@ -271,7 +271,7 @@ def forward_step(data_iterator, model: GPTModel, return_schedule_plan: bool = Fa
 def is_dataset_built_on_rank(vp_stage=None, is_packed_sequence=False):
     args = get_args()
     config = core_transformer_config_from_args(args)
-    if parallel_state.get_tensor_model_parallel_rank() != 0:
+    if parallel_state.get_tensor_model_parallel_rank() != 0 and not args.fake_process_group:
         return False
     elif is_packed_sequence:
         return True

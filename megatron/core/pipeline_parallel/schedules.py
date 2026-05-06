@@ -8,6 +8,7 @@ import torch
 from torch.autograd.variable import Variable
 
 from megatron.core import parallel_state
+from megatron.core.instrumentation import get_tracer
 from megatron.core.pipeline_parallel.fine_grained_activation_offload import (
     FineGrainedActivationOffloadingInterface as off_interface,
 )
@@ -1040,6 +1041,8 @@ def forward_backward_pipelining_with_interleaving(
 
     pipeline_parallel_size = p2p_communicator.pp_group.size()
     pipeline_parallel_rank = p2p_communicator.pp_group.rank()
+    tracer = get_tracer()
+    pipeline_stage = pipeline_parallel_rank
 
     if (
         config.microbatch_group_size_per_vp_stage > num_microbatches
@@ -1275,6 +1278,8 @@ def forward_backward_pipelining_with_interleaving(
             virtual_microbatch_id, model_chunk_id, microbatch_id
         )
 
+        if tracer is not None:
+            tracer.record_slot_begin(virtual_microbatch_id, 'fwd', pipeline_parallel_rank)
         output_tensor, num_tokens = forward_step(
             forward_step_func,
             data_iterator[model_chunk_id],
@@ -1295,6 +1300,8 @@ def forward_backward_pipelining_with_interleaving(
             vp_stage=model_chunk_id,
             is_last_stage=_is_vp_last_stage(vp_stage=model_chunk_id) and is_pp_last_stage(pp_group),
         )
+        if tracer is not None:
+            tracer.record_slot_end(virtual_microbatch_id, 'fwd', pipeline_parallel_rank)
 
         forward_step_helper_postprocess(model_chunk_id, output_tensor, num_tokens)
 
@@ -1348,7 +1355,11 @@ def forward_backward_pipelining_with_interleaving(
             virtual_microbatch_id, model_chunk_id
         )
 
+        if tracer is not None:
+            tracer.record_slot_begin(virtual_microbatch_id, 'bwd', pipeline_parallel_rank)
         input_tensor_grad = backward_step(input_tensor, output_tensor, output_tensor_grad, config)
+        if tracer is not None:
+            tracer.record_slot_end(virtual_microbatch_id, 'bwd', pipeline_parallel_rank)
 
         backward_step_helper_postprocess(virtual_microbatch_id)
 
@@ -2138,6 +2149,9 @@ def forward_backward_pipelining_without_interleaving(
             config, model, p2p_communicator.is_pp_last_stage
         )
 
+    tracer = get_tracer()
+    pipeline_stage = parallel_state.get_pipeline_model_parallel_rank()
+
     if config.timers is not None:
         config.timers('forward-backward', log_level=1).start(barrier=config.barrier_with_L1_time)
 
@@ -2164,7 +2178,7 @@ def forward_backward_pipelining_without_interleaving(
     disable_grad_sync()
 
     # Compute number of warmup microbatches.
-    num_warmup_microbatches = p2p_communicator.total_stages - p2p_communicator.current_stage - 1
+    num_warmup_microbatches = 0
     num_warmup_microbatches = min(num_warmup_microbatches, num_microbatches)
     num_microbatches_remaining = num_microbatches - num_warmup_microbatches
 
@@ -2234,6 +2248,8 @@ def forward_backward_pipelining_without_interleaving(
         input_tensor = p2p_communicator.recv_forward(
             recv_tensor_shapes, p2p_communicator.is_pp_first_stage
         )
+        if tracer is not None:
+            tracer.record_slot_begin(i, 'fwd', pipeline_stage)
         output_tensor, num_tokens = forward_step(
             forward_step_func,
             data_iterator,
@@ -2249,6 +2265,8 @@ def forward_backward_pipelining_without_interleaving(
             current_microbatch=i,
             is_last_stage=p2p_communicator.is_pp_last_stage,
         )
+        if tracer is not None:
+            tracer.record_slot_end(i, 'fwd', pipeline_stage)
         p2p_communicator.send_forward(output_tensor, p2p_communicator.is_pp_last_stage)
         total_num_tokens += num_tokens
 
@@ -2277,6 +2295,9 @@ def forward_backward_pipelining_without_interleaving(
         else:
             checkpoint_activations_microbatch = None
 
+        microbatch_id = i + num_warmup_microbatches
+        if tracer is not None:
+            tracer.record_slot_begin(microbatch_id, 'fwd', pipeline_stage)
         output_tensor, num_tokens = forward_step(
             forward_step_func,
             data_iterator,
@@ -2291,9 +2312,11 @@ def forward_backward_pipelining_without_interleaving(
             is_first_microbatch=check_first_val_step(
                 first_val_step, forward_only, (i == 0) and (num_warmup_microbatches == 0)
             ),
-            current_microbatch=i + num_warmup_microbatches,
+            current_microbatch=microbatch_id,
             is_last_stage=p2p_communicator.is_pp_last_stage,
         )
+        if tracer is not None:
+            tracer.record_slot_end(microbatch_id, 'fwd', pipeline_stage)
         total_num_tokens += num_tokens
 
         if forward_only:
@@ -2323,9 +2346,13 @@ def forward_backward_pipelining_without_interleaving(
                 if config.grad_sync_func is None or p2p_communicator.is_pp_first_stage:
                     enable_grad_sync()
 
+            if tracer is not None:
+                tracer.record_slot_begin(microbatch_id, 'bwd', pipeline_stage)
             input_tensor_grad = backward_func(
                 input_tensor, output_tensor, output_tensor_grad, config
             )
+            if tracer is not None:
+                tracer.record_slot_end(microbatch_id, 'bwd', pipeline_stage)
 
             if last_iteration:
                 input_tensor = None
@@ -2357,9 +2384,13 @@ def forward_backward_pipelining_without_interleaving(
                 send_tensor_shapes, p2p_communicator.is_pp_last_stage
             )
 
+            if tracer is not None:
+                tracer.record_slot_begin(i, 'bwd', pipeline_stage)
             input_tensor_grad = backward_func(
                 input_tensor, output_tensor, output_tensor_grad, config
             )
+            if tracer is not None:
+                tracer.record_slot_end(i, 'bwd', pipeline_stage)
 
             p2p_communicator.send_backward(input_tensor_grad, p2p_communicator.is_pp_first_stage)
 
