@@ -1848,9 +1848,13 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                                      (iteration + 1) % args.save_dgrads_interval == 0)
 
     def _finish_and_save_trace():
+        print(f"[_finish_and_save_trace] trace_enabled={trace_enabled} tracer={tracer} fake_pg={getattr(args, 'fake_process_group', False)}", flush=True)
         if trace_enabled:
             trace = tracer.finish_iteration()
+            print(f"[_finish_and_save_trace] trace events={len(trace.get('events', []))}", flush=True)
             _save_trace(trace, args)
+        else:
+            print(f"[_finish_and_save_trace] SKIPPED: trace_enabled={trace_enabled}", flush=True)
 
     while rerun_state_machine.should_run_forward_backward(data_iterator):
         # Set grad to zero.
@@ -2037,7 +2041,9 @@ def _save_trace(trace, args):
     stage = args.rank // ranks_per_stage
     out_dir = getattr(args, 'trace_dir', './traces')
     path = os.path.join(out_dir, f'trace_pp_stage_{stage}.json')
+    print(f"[_save_trace] rank={args.rank} stage={stage} path={path} events={len(trace.get('events', []))}", flush=True)
     serialize_trace(trace, path)
+    print(f"[_save_trace] done: {path}", flush=True)
 
 
 def training_log(
