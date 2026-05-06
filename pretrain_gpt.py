@@ -275,6 +275,9 @@ def is_dataset_built_on_rank(vp_stage=None, is_packed_sequence=False):
         return False
     elif is_packed_sequence:
         return True
+    elif args.fake_process_group:
+        # Trace generation: each simulated rank needs its own dataset.
+        return True
     return (
         is_first_or_last_pipeline_stage(vp_stage)
         or mtp_on_this_rank(config, ignore_virtual=False, vp_stage=vp_stage)
