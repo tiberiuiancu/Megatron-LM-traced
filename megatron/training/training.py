@@ -3757,10 +3757,12 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
             # Build datasets.
             train_ds, valid_ds, test_ds = build_train_valid_test_datasets(build_train_valid_test_datasets_provider)
             valid_ds = [valid_ds] if not isinstance(valid_ds, list) else valid_ds
+            print(f"[pretrain] skip_train={args.skip_train} train_ds={train_ds is not None}", flush=True)
             if args.skip_train:
                 train_dataloader = None
             else:
                 train_dataloader = build_pretraining_data_loader(train_ds, consumed_train_samples_in_current_phase)
+                print(f"[pretrain] train_dataloader={train_dataloader is not None}", flush=True)
             valid_dataloaders = []
             for valid_d in valid_ds:
                 if args.skip_train or args.full_validation:
