@@ -1192,7 +1192,9 @@ def pretrain(
 
         iteration = 0
         args.curr_iteration = iteration
+        print(f"[pretrain] do_train={getattr(args, 'do_train', None)} train_iters={getattr(args, 'train_iters', None)}", flush=True)
         if args.do_train and (args.train_iters or 0) > 0:
+            print("[pretrain] CALLING train()", flush=True)
             iteration, num_floating_point_operations_so_far = train(
                 forward_step_func,
                 model,
@@ -2732,6 +2734,7 @@ def train(
     non_loss_data_func,
     inference_model=None,
 ):
+    print("[train] ENTERED", flush=True)
     """Training function: run train_step desired number of times, run validation, checkpoint."""
     args = get_args()
     timers = get_timers()
@@ -3008,7 +3011,7 @@ def train(
 
     # Run training iterations till done.
     buffered_rollouts = None
-    print(f"[pretrain] entering loop iteration={iteration} train_iters={args.train_iters}", flush=True)
+    print(f"[train] about to enter loop iteration={iteration} train_iters={args.train_iters}", flush=True)
     while iteration < args.train_iters:
         if (args.profile 
             and (len(args.profile_ranks) == 0 or
