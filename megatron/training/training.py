@@ -1,6 +1,7 @@
 # Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 """Pretrain utilities."""
+print("[training.py] MODULE LOADED — instrumented version", flush=True)
 import time
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
@@ -843,6 +844,7 @@ def pretrain(
     store=None,
     inprocess_call_wrapper: Optional[CallWrapper] = None,
 ):
+    print("[pretrain] ENTERED", flush=True)
     """Main training program.
 
     This function will run the followings in the order provided:
@@ -1828,6 +1830,7 @@ def dummy_train_step(data_iterator):
 
 def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_scheduler, config, forward_backward_func, iteration=None):
     """Single training step."""
+    print(f"[train_step] ENTERED iteration={iteration}", flush=True)
     args = get_args()
     timers = get_timers()
     tracer = get_tracer()
@@ -3126,6 +3129,7 @@ def train(
             num_zeros_in_grad = 0
             max_attention_logit = None
         else:
+            print(f"[pretrain] about to call train_step iteration={iteration} skip_train={args.skip_train}", flush=True)
             ft_integration.on_training_step_start()
             (
                 loss_dict,
