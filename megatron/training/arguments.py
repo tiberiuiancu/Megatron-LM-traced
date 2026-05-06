@@ -143,7 +143,8 @@ def parse_args(extra_args_provider=None, ignore_unknown_args=False):
 
 
     # Args from environment
-    args.rank = int(os.getenv('RANK', '0'))
+    if args.rank is None:
+        args.rank = int(os.getenv('RANK', '0'))
     args.world_size = int(os.getenv("WORLD_SIZE", '1'))
 
     # Args to disable MSC
@@ -2836,6 +2837,10 @@ def _add_distributed_args(parser):
                        help='If set, initialize with fake distributed process group and all distributed communication operations will be skipped. \
                        This is quite useful for profiling memory usage of distributed training with just one GPU. \
                        Setting WORLD_SIZE and RANK to the specific values for target distribtued scale.')
+    group.add_argument('--rank', type=int, default=None,
+                       help='Global rank for fake process group (overrides RANK env var).')
+    group.add_argument('--trace-dir', type=str, default='./traces',
+                       help='Directory to save execution traces.')
     return parser
 
 
