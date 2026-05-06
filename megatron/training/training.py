@@ -3741,6 +3741,7 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
     is_distributed = getattr(build_train_valid_test_datasets_provider, "is_distributed", False)
 
     # Construct the data pipeline
+    print(f"[build_train_valid_test_data_loaders] tp_rank={mpu.get_tensor_model_parallel_rank()} fake_pg={args.fake_process_group} is_distributed={is_distributed}", flush=True)
     if is_distributed or mpu.get_tensor_model_parallel_rank() == 0 or args.fake_process_group:
 
         # Build datasets and dataloders.
@@ -3796,6 +3797,7 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
 
 def build_train_valid_test_data_iterators(build_train_valid_test_datasets_provider):
     """Build pretraining data iterators."""
+    print("[build_train_valid_test_data_iterators] ENTERED", flush=True)
 
     args = get_args()
 
