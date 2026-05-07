@@ -2327,7 +2327,8 @@ def forward_backward_pipelining_without_interleaving(
                 )
         else:
             output_tensor_grad = p2p_communicator.send_forward_recv_backward(
-                output_tensor, send_tensor_shapes, p2p_communicator.is_pp_last_stage
+                output_tensor, send_tensor_shapes, p2p_communicator.is_pp_last_stage,
+                microbatch_id=microbatch_id,
             )
 
             # Add input_tensor and output_tensor to end of list.
@@ -2361,7 +2362,8 @@ def forward_backward_pipelining_without_interleaving(
                 )
             else:
                 input_tensor = p2p_communicator.send_backward_recv_forward(
-                    input_tensor_grad, recv_tensor_shapes, p2p_communicator.is_pp_first_stage
+                    input_tensor_grad, recv_tensor_shapes, p2p_communicator.is_pp_first_stage,
+                    microbatch_id=microbatch_id,
                 )
 
     # Run cooldown backward passes.

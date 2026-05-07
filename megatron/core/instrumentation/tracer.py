@@ -47,7 +47,7 @@ class CudaEventTracer:
         else:
             self._start_time = perf_counter()
 
-    def record_collective(self, name, collective_type, bytes, group_ranks):
+    def record_collective(self, name, collective_type, bytes, group_ranks, microbatch_id=None, direction=None):
         event = self._new_event()
         metadata = {
             "name": name,
@@ -55,6 +55,10 @@ class CudaEventTracer:
             "bytes": bytes,
             "group_ranks": group_ranks,
         }
+        if microbatch_id is not None:
+            metadata["microbatch_id"] = microbatch_id
+        if direction is not None:
+            metadata["direction"] = direction
         if self._use_cuda_events:
             event.record()
             self._events.append(("collective", event, metadata))
