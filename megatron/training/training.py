@@ -1836,6 +1836,7 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
     args = get_args()
     timers = get_timers()
     tracer = get_tracer()
+    pipeline_stage = mpu.get_pipeline_model_parallel_rank()
     trace_enabled = tracer is not None and getattr(args, 'fake_process_group', False)
     if trace_enabled:
         tracer.start_iteration()
@@ -1965,6 +1966,8 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
     # Update parameters.
 
     timers('optimizer', log_level=1).start(barrier=args.barrier_with_L1_time)
+    if tracer is not None:
+        tracer.record_slot_begin(microbatch_id=0, direction='step', pipeline_stage=pipeline_stage)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
     # get max attention logit for logging and run clip_qk()
@@ -1974,6 +1977,8 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
         log_max_attention_logit = clip_qk(model, log_max_only=not args.qk_clip)
 
     timers('optimizer').stop()
+    if tracer is not None:
+        tracer.record_slot_end(microbatch_id=0, direction='step', pipeline_stage=pipeline_stage)
 
     # Checkpoint params with parameter names.
     if save_params_in_this_iteration:
