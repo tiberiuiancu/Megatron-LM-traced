@@ -30,6 +30,10 @@ class CudaEventTracer:
         self._start_event = None
         self._events: list[tuple[str, float | Any, dict[str, Any]]] = []
         self._event_pool: list[Any] = []
+        self._total_flops: float | None = None
+
+    def set_total_flops(self, total_flops: float) -> None:
+        self._total_flops = total_flops
 
     def _new_event(self):
         if not self._use_cuda_events:
@@ -83,14 +87,18 @@ class CudaEventTracer:
             self._events.append((event_type, perf_counter(), metadata))
 
     def finish_iteration(self) -> dict:
+        trace: dict[str, Any] = {
+            "trace_format_version": "1.0",
+            "rank": self.rank,
+            "world_size": self.world_size,
+            "pipeline_stage": self.pipeline_stage,
+            "events": [],
+        }
+        if self._total_flops is not None:
+            trace["total_flops"] = self._total_flops
+
         if not self._iteration_started:
-            return {
-                "trace_format_version": "1.0",
-                "rank": self.rank,
-                "world_size": self.world_size,
-                "pipeline_stage": self.pipeline_stage,
-                "events": [],
-            }
+            return trace
 
         if self._use_cuda_events:
             torch.cuda.synchronize()
@@ -114,13 +122,8 @@ class CudaEventTracer:
 
         events.sort(key=lambda item: item["timestamp_ms"])
         self._iteration_started = False
-        return {
-            "trace_format_version": "1.0",
-            "rank": self.rank,
-            "world_size": self.world_size,
-            "pipeline_stage": self.pipeline_stage,
-            "events": events,
-        }
+        trace["events"] = events
+        return trace
 
 
 _tracer: CudaEventTracer | None = None

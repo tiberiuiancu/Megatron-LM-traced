@@ -3239,6 +3239,8 @@ def train(
             assert num_skipped_samples_in_batch == 0
         args.skipped_train_samples += num_skipped_samples_in_batch
         num_floating_point_operations_in_batch = num_floating_point_operations(args, batch_size)
+        if tracer is not None:
+            tracer.set_total_flops(num_floating_point_operations_in_batch)
         num_floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
