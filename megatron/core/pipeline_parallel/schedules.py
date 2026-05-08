@@ -1499,6 +1499,8 @@ def forward_backward_pipelining_with_interleaving(
                     recv_prev=recv_prev,
                     tensor_shape=tensor_shape,
                     overlap_p2p_comm=True,
+                    send_microbatch_id=None,
+                    recv_microbatch_id=k + 1 if recv_prev else None,
                 )
             )
 
@@ -1543,12 +1545,18 @@ def forward_backward_pipelining_with_interleaving(
                         recv_prev=recv_prev,
                         recv_next=recv_next,
                         tensor_shape=tensor_shape,
+                        send_fwd_microbatch_id=k,
+                        send_bwd_microbatch_id=None,
+                        recv_fwd_microbatch_id=k + 1 if recv_prev else None,
+                        recv_bwd_microbatch_id=k if recv_next else None,
                     )
                 )
                 output_tensor_grads[num_model_chunks - 1].append(output_tensor_grad)
             else:
                 input_tensor = p2p_communicator.send_forward_recv_forward(
-                    output_tensor, recv_prev=recv_prev, tensor_shape=tensor_shape
+                    output_tensor, recv_prev=recv_prev, tensor_shape=tensor_shape,
+                    send_microbatch_id=k,
+                    recv_microbatch_id=k + 1 if recv_prev else None,
                 )
             if recv_prev:
                 input_tensors[next_forward_model_chunk_id].append(input_tensor)
@@ -1557,7 +1565,9 @@ def forward_backward_pipelining_with_interleaving(
             if not is_pp_first_stage(p2p_communicator.pp_group):
                 # Send only since recv prefetched.
                 _, fwd_wait_handles = p2p_communicator.send_forward_recv_forward(
-                    output_tensor, recv_prev=False, tensor_shape=tensor_shape, overlap_p2p_comm=True
+                    output_tensor, recv_prev=False, tensor_shape=tensor_shape, overlap_p2p_comm=True,
+                    send_microbatch_id=k,
+                    recv_microbatch_id=None,
                 )
             else:  # No prefetch for first rank, so both send and recv initiated.
                 fwd_recv_buffer[k % fwd_recv_buffer_size], fwd_wait_handles = (
@@ -1566,6 +1576,8 @@ def forward_backward_pipelining_with_interleaving(
                         recv_prev=recv_prev,
                         tensor_shape=tensor_shape,
                         overlap_p2p_comm=True,
+                        send_microbatch_id=k,
+                        recv_microbatch_id=k + 1 if recv_prev else None,
                     )
                 )
             if send_next_wait_handle is not None:
@@ -1606,6 +1618,8 @@ def forward_backward_pipelining_with_interleaving(
                         recv_next=recv_next,
                         tensor_shape=tensor_shape,
                         overlap_p2p_comm=True,
+                        send_microbatch_id=None,
+                        recv_microbatch_id=k if recv_next else None,
                     )
                 )
                 if send_prev_wait_handle is not None:
@@ -1691,6 +1705,8 @@ def forward_backward_pipelining_with_interleaving(
                         recv_prev=recv_prev,
                         tensor_shape=tensor_shape,
                         overlap_p2p_comm=True,
+                        send_microbatch_id=forward_k,
+                        recv_microbatch_id=forward_k + 1 if recv_prev else None,
                     )
                 )
                 if send_next_wait_handle is not None:
@@ -1759,6 +1775,8 @@ def forward_backward_pipelining_with_interleaving(
                         recv_next=recv_next,
                         tensor_shape=tensor_shape,
                         overlap_p2p_comm=True,
+                        send_microbatch_id=backward_k,
+                        recv_microbatch_id=backward_k + 1 if recv_next else None,
                     )
                 )
                 if send_prev_wait_handle is not None:
@@ -1833,6 +1851,10 @@ def forward_backward_pipelining_with_interleaving(
                     recv_prev=recv_prev,
                     recv_next=recv_next,
                     tensor_shape=tensor_shape,
+                    send_fwd_microbatch_id=forward_k,
+                    send_bwd_microbatch_id=backward_k,
+                    recv_fwd_microbatch_id=forward_k + 1 if recv_prev else None,
+                    recv_bwd_microbatch_id=backward_k + 1 if recv_next else None,
                 )
             )
             deallocate_output_tensor(output_tensor, config.deallocate_pipeline_outputs)
@@ -1900,6 +1922,8 @@ def forward_backward_pipelining_with_interleaving(
                         recv_next=recv_next,
                         tensor_shape=tensor_shape,
                         overlap_p2p_comm=True,
+                        send_microbatch_id=None,
+                        recv_microbatch_id=k + 1 if recv_next else None,
                     )
                 )
 
@@ -1919,6 +1943,8 @@ def forward_backward_pipelining_with_interleaving(
                         recv_next=False,
                         tensor_shape=tensor_shape,
                         overlap_p2p_comm=True,
+                        send_microbatch_id=k,
+                        recv_microbatch_id=None,
                     )
                 else:
                     bwd_recv_buffer[k % bwd_recv_buffer_size], bwd_wait_handles = (
@@ -1927,6 +1953,8 @@ def forward_backward_pipelining_with_interleaving(
                             recv_next=recv_next,
                             tensor_shape=tensor_shape,
                             overlap_p2p_comm=True,
+                            send_microbatch_id=k,
+                            recv_microbatch_id=k + 1 if recv_next else None,
                         )
                     )
 
@@ -1948,7 +1976,9 @@ def forward_backward_pipelining_with_interleaving(
 
             else:
                 output_tensor_grad = p2p_communicator.send_backward_recv_backward(
-                    input_tensor_grad, recv_next=recv_next, tensor_shape=tensor_shape
+                    input_tensor_grad, recv_next=recv_next, tensor_shape=tensor_shape,
+                    send_microbatch_id=k,
+                    recv_microbatch_id=k + 1 if recv_next else None,
                 )
 
                 if recv_next:
