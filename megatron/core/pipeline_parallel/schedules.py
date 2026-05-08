@@ -2352,13 +2352,14 @@ def forward_backward_pipelining_without_interleaving(
                 if config.grad_sync_func is None or p2p_communicator.is_pp_first_stage:
                     enable_grad_sync()
 
+            bwd_microbatch_id = microbatch_id - num_warmup_microbatches
             if tracer is not None:
-                tracer.record_slot_begin(microbatch_id, 'bwd', pipeline_stage)
+                tracer.record_slot_begin(bwd_microbatch_id, 'bwd', pipeline_stage)
             input_tensor_grad = backward_func(
                 input_tensor, output_tensor, output_tensor_grad, config
             )
             if tracer is not None:
-                tracer.record_slot_end(microbatch_id, 'bwd', pipeline_stage)
+                tracer.record_slot_end(bwd_microbatch_id, 'bwd', pipeline_stage)
 
             if last_iteration:
                 input_tensor = None
@@ -2392,13 +2393,14 @@ def forward_backward_pipelining_without_interleaving(
                 send_tensor_shapes, p2p_communicator.is_pp_last_stage, microbatch_id=i, direction='bwd'
             )
 
+            bwd_microbatch_id = num_microbatches_remaining + i
             if tracer is not None:
-                tracer.record_slot_begin(i, 'bwd', pipeline_stage)
+                tracer.record_slot_begin(bwd_microbatch_id, 'bwd', pipeline_stage)
             input_tensor_grad = backward_func(
                 input_tensor, output_tensor, output_tensor_grad, config
             )
             if tracer is not None:
-                tracer.record_slot_end(i, 'bwd', pipeline_stage)
+                tracer.record_slot_end(bwd_microbatch_id, 'bwd', pipeline_stage)
 
             p2p_communicator.send_backward(input_tensor_grad, p2p_communicator.is_pp_first_stage, microbatch_id=i, direction='bwd')
 
