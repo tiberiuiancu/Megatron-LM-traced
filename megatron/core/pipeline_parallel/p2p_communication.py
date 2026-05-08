@@ -15,7 +15,9 @@ from megatron.core.utils import nvtx_decorator
 Shape = Union[List[int], torch.Size]
 
 
-def _tensor_bytes(tensor: torch.Tensor) -> int:
+def _tensor_bytes(tensor: Optional[torch.Tensor]) -> int:
+    if tensor is None:
+        return 0
     return tensor.numel() * tensor.element_size()
 
 
