@@ -595,7 +595,8 @@ class P2PCommunicator:
 
     @nvtx_decorator()
     def send_forward_recv_backward(
-        self, output_tensors, tensor_shapes, is_last_stage: bool
+        self, output_tensors, tensor_shapes, is_last_stage: bool,
+        send_microbatch_id=None, recv_microbatch_id=None,
     ) -> Union[torch.Tensor, list[torch.Tensor]]:
         """Batched send and recv with next rank in pipeline."""
         config = self.config
@@ -606,12 +607,29 @@ class P2PCommunicator:
         if not isinstance(tensor_shapes, list):
             tensor_shapes = [tensor_shapes]
         output_tensor_grads = []
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         for output_tensor, tensor_shape in zip(output_tensors, tensor_shapes):
             if is_last_stage:
                 output_tensor_grad = None
             else:
                 if config.timers is not None:
                     config.timers('forward-send-backward-recv', log_level=2).start()
+                _record_pp_collective(
+                    name='send_forward',
+                    collective_type='PP_Send',
+                    bytes=_tensor_bytes(output_tensor),
+                    group_ranks=[current_rank, self.next_rank],
+                    microbatch_id=send_microbatch_id,
+                    direction='fwd',
+                )
+                _record_pp_collective(
+                    name='recv_backward',
+                    collective_type='PP_Recv',
+                    bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                    group_ranks=[current_rank, self.next_rank],
+                    microbatch_id=recv_microbatch_id,
+                    direction='bwd',
+                )
                 _, output_tensor_grad, _ = self._communicate(
                     tensor_send_next=output_tensor,
                     tensor_send_prev=None,
@@ -628,7 +646,8 @@ class P2PCommunicator:
 
     @nvtx_decorator()
     def send_backward_recv_forward(
-        self, input_tensor_grads, tensor_shapes, is_first_stage: bool
+        self, input_tensor_grads, tensor_shapes, is_first_stage: bool,
+        send_microbatch_id=None, recv_microbatch_id=None,
     ) -> Union[torch.Tensor, list[torch.Tensor]]:
         """Batched send and recv with previous rank in pipeline."""
         config = self.config
@@ -639,12 +658,29 @@ class P2PCommunicator:
         if not isinstance(tensor_shapes, list):
             tensor_shapes = [tensor_shapes]
         input_tensors = []
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         for input_tensor_grad, tensor_shape in zip(input_tensor_grads, tensor_shapes):
             if is_first_stage:
                 input_tensor = None
             else:
                 if config.timers is not None:
                     config.timers('backward-send-forward-recv', log_level=2).start()
+                _record_pp_collective(
+                    name='send_backward',
+                    collective_type='PP_Send',
+                    bytes=_tensor_bytes(input_tensor_grad),
+                    group_ranks=[self.prev_rank, current_rank],
+                    microbatch_id=send_microbatch_id,
+                    direction='bwd',
+                )
+                _record_pp_collective(
+                    name='recv_forward',
+                    collective_type='PP_Recv',
+                    bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                    group_ranks=[self.prev_rank, current_rank],
+                    microbatch_id=recv_microbatch_id,
+                    direction='fwd',
+                )
                 input_tensor, _, _ = self._communicate(
                     tensor_send_next=None,
                     tensor_send_prev=input_tensor_grad,
@@ -666,11 +702,31 @@ class P2PCommunicator:
         recv_prev: bool,
         tensor_shape: Shape,
         overlap_p2p_comm: bool = False,
+        send_microbatch_id=None,
+        recv_microbatch_id=None,
     ) -> torch.Tensor:
         """Batched recv from previous rank and send to next rank in pipeline."""
         config = self.config
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         if config.timers is not None:
             config.timers('forward-send-forward-recv', log_level=2).start()
+        _record_pp_collective(
+            name='send_forward',
+            collective_type='PP_Send',
+            bytes=_tensor_bytes(output_tensor),
+            group_ranks=[current_rank, self.next_rank],
+            microbatch_id=send_microbatch_id,
+            direction='fwd',
+        )
+        if recv_prev:
+            _record_pp_collective(
+                name='recv_forward',
+                collective_type='PP_Recv',
+                bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                group_ranks=[self.prev_rank, current_rank],
+                microbatch_id=recv_microbatch_id,
+                direction='fwd',
+            )
         input_tensor, _, wait_handles = self._communicate(
             tensor_send_next=output_tensor,
             tensor_send_prev=None,
@@ -692,11 +748,31 @@ class P2PCommunicator:
         recv_next: bool,
         tensor_shape: Shape,
         overlap_p2p_comm: bool = False,
+        send_microbatch_id=None,
+        recv_microbatch_id=None,
     ) -> torch.Tensor:
         """Batched recv from next rank and send to previous rank in pipeline."""
         config = self.config
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         if config.timers is not None:
             config.timers('backward-send-backward-recv', log_level=2).start()
+        _record_pp_collective(
+            name='send_backward',
+            collective_type='PP_Send',
+            bytes=_tensor_bytes(input_tensor_grad),
+            group_ranks=[self.prev_rank, current_rank],
+            microbatch_id=send_microbatch_id,
+            direction='bwd',
+        )
+        if recv_next:
+            _record_pp_collective(
+                name='recv_backward',
+                collective_type='PP_Recv',
+                bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                group_ranks=[current_rank, self.next_rank],
+                microbatch_id=recv_microbatch_id,
+                direction='bwd',
+            )
         _, output_tensor_grad, wait_handles = self._communicate(
             tensor_send_next=None,
             tensor_send_prev=input_tensor_grad,
@@ -719,11 +795,50 @@ class P2PCommunicator:
         recv_prev: bool,
         recv_next: bool,
         tensor_shape: Shape,
+        send_fwd_microbatch_id=None,
+        send_bwd_microbatch_id=None,
+        recv_fwd_microbatch_id=None,
+        recv_bwd_microbatch_id=None,
     ) -> torch.Tensor:
         """Batched send and recv with previous and next ranks in pipeline."""
         config = self.config
+        current_rank = dist.get_global_rank(self.pp_group, self.pp_group.rank())
         if config.timers is not None:
             config.timers('forward-backward-send-forward-backward-recv', log_level=2).start()
+        _record_pp_collective(
+            name='send_forward',
+            collective_type='PP_Send',
+            bytes=_tensor_bytes(output_tensor),
+            group_ranks=[current_rank, self.next_rank],
+            microbatch_id=send_fwd_microbatch_id,
+            direction='fwd',
+        )
+        _record_pp_collective(
+            name='send_backward',
+            collective_type='PP_Send',
+            bytes=_tensor_bytes(input_tensor_grad),
+            group_ranks=[self.prev_rank, current_rank],
+            microbatch_id=send_bwd_microbatch_id,
+            direction='bwd',
+        )
+        if recv_prev:
+            _record_pp_collective(
+                name='recv_forward',
+                collective_type='PP_Recv',
+                bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                group_ranks=[self.prev_rank, current_rank],
+                microbatch_id=recv_fwd_microbatch_id,
+                direction='fwd',
+            )
+        if recv_next:
+            _record_pp_collective(
+                name='recv_backward',
+                collective_type='PP_Recv',
+                bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
+                group_ranks=[current_rank, self.next_rank],
+                microbatch_id=recv_bwd_microbatch_id,
+                direction='bwd',
+            )
         input_tensor, output_tensor_grad, _ = self._communicate(
             tensor_send_next=output_tensor,
             tensor_send_prev=input_tensor_grad,
