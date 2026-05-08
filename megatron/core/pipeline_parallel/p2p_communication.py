@@ -33,6 +33,8 @@ def _record_pp_collective(
     collective_type: str,
     bytes: int,
     group_ranks: list[int],
+    microbatch_id=None,
+    direction=None,
 ):
     tracer = get_tracer()
     if tracer is not None:
@@ -41,6 +43,8 @@ def _record_pp_collective(
             collective_type=collective_type,
             bytes=bytes,
             group_ranks=group_ranks,
+            microbatch_id=microbatch_id,
+            direction=direction,
         )
 
 
