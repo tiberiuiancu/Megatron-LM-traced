@@ -1438,7 +1438,7 @@ def forward_backward_pipelining_with_interleaving(
     nvtx_range_push(suffix="warmup")
     input_tensors[0].append(
         p2p_communicator.recv_forward(
-            tensor_shape, _is_vp_first_stage(vp_stage=0) and is_pp_first_stage(pp_group)
+            tensor_shape, _is_vp_first_stage(vp_stage=0) and is_pp_first_stage(pp_group), microbatch_id=0, direction='fwd'
         )
     )
 
@@ -1861,6 +1861,8 @@ def forward_backward_pipelining_with_interleaving(
                     is_last_stage=(
                         _is_vp_last_stage(vp_stage=curr_vp_stage) and is_pp_last_stage(pp_group)
                     ),
+                    microbatch_id=num_microbatches_remaining,
+                    direction='bwd',
                 )
             )
         for k in range(num_microbatches_remaining, total_num_microbatches):
@@ -2246,7 +2248,7 @@ def forward_backward_pipelining_without_interleaving(
             checkpoint_activations_microbatch = None
 
         input_tensor = p2p_communicator.recv_forward(
-            recv_tensor_shapes, p2p_communicator.is_pp_first_stage
+            recv_tensor_shapes, p2p_communicator.is_pp_first_stage, microbatch_id=i, direction='fwd'
         )
         if tracer is not None:
             tracer.record_slot_begin(i, 'fwd', pipeline_stage)
@@ -2267,7 +2269,7 @@ def forward_backward_pipelining_without_interleaving(
         )
         if tracer is not None:
             tracer.record_slot_end(i, 'fwd', pipeline_stage)
-        p2p_communicator.send_forward(output_tensor, p2p_communicator.is_pp_last_stage)
+        p2p_communicator.send_forward(output_tensor, p2p_communicator.is_pp_last_stage, microbatch_id=i, direction='fwd')
         total_num_tokens += num_tokens
 
         if not forward_only:
@@ -2280,7 +2282,7 @@ def forward_backward_pipelining_without_interleaving(
     # receive this tensor here.
     if num_microbatches_remaining > 0:
         input_tensor = p2p_communicator.recv_forward(
-            recv_tensor_shapes, p2p_communicator.is_pp_first_stage
+            recv_tensor_shapes, p2p_communicator.is_pp_first_stage, microbatch_id=num_warmup_microbatches, direction='fwd'
         )
 
     # Run 1F1B in steady state.
@@ -2320,10 +2322,10 @@ def forward_backward_pipelining_without_interleaving(
         total_num_tokens += num_tokens
 
         if forward_only:
-            p2p_communicator.send_forward(output_tensor, p2p_communicator.is_pp_last_stage)
+            p2p_communicator.send_forward(output_tensor, p2p_communicator.is_pp_last_stage, microbatch_id=microbatch_id, direction='fwd')
             if not last_iteration:
                 input_tensor = p2p_communicator.recv_forward(
-                    recv_tensor_shapes, p2p_communicator.is_pp_first_stage
+                    recv_tensor_shapes, p2p_communicator.is_pp_first_stage, microbatch_id=microbatch_id+1, direction='fwd'
                 )
         else:
             output_tensor_grad = p2p_communicator.send_forward_recv_backward(
@@ -2357,7 +2359,7 @@ def forward_backward_pipelining_without_interleaving(
             if last_iteration:
                 input_tensor = None
                 p2p_communicator.send_backward(
-                    input_tensor_grad, p2p_communicator.is_pp_first_stage
+                    input_tensor_grad, p2p_communicator.is_pp_first_stage, microbatch_id=microbatch_id, direction='bwd'
                 )
             else:
                 input_tensor = p2p_communicator.send_backward_recv_forward(
@@ -2381,7 +2383,7 @@ def forward_backward_pipelining_without_interleaving(
             output_tensor = output_tensors.pop(0)
 
             output_tensor_grad = p2p_communicator.recv_backward(
-                send_tensor_shapes, p2p_communicator.is_pp_last_stage
+                send_tensor_shapes, p2p_communicator.is_pp_last_stage, microbatch_id=i, direction='bwd'
             )
 
             if tracer is not None:
@@ -2392,7 +2394,7 @@ def forward_backward_pipelining_without_interleaving(
             if tracer is not None:
                 tracer.record_slot_end(i, 'bwd', pipeline_stage)
 
-            p2p_communicator.send_backward(input_tensor_grad, p2p_communicator.is_pp_first_stage)
+            p2p_communicator.send_backward(input_tensor_grad, p2p_communicator.is_pp_first_stage, microbatch_id=i, direction='bwd')
 
         # Launch any remaining grad reductions.
         if no_sync_context is not None:

@@ -452,7 +452,7 @@ class P2PCommunicator:
 
     @nvtx_decorator()
     def recv_forward(
-        self, tensor_shapes, is_first_stage: bool
+        self, tensor_shapes, is_first_stage: bool, microbatch_id=None, direction='fwd'
     ) -> Union[torch.Tensor, list[torch.Tensor]]:
         """Receive tensor from previous rank in pipeline (forward receive)."""
         unwrap_tensor_shapes = False
@@ -473,6 +473,8 @@ class P2PCommunicator:
                     collective_type='PP_Recv',
                     bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
                     group_ranks=[self.prev_rank, current_rank],
+                    microbatch_id=microbatch_id,
+                    direction=direction,
                 )
                 input_tensor, _, _ = self._communicate(
                     tensor_send_next=None,
@@ -490,7 +492,7 @@ class P2PCommunicator:
 
     @nvtx_decorator()
     def recv_backward(
-        self, tensor_shapes, is_last_stage: bool
+        self, tensor_shapes, is_last_stage: bool, microbatch_id=None, direction='bwd'
     ) -> Union[torch.Tensor, list[torch.Tensor]]:
         """Receive tensor from next rank in pipeline (backward receive)."""
         unwrap_tensor_shapes = False
@@ -511,6 +513,8 @@ class P2PCommunicator:
                     collective_type='PP_Recv',
                     bytes=_shape_bytes(tensor_shape, config.pipeline_dtype),
                     group_ranks=[current_rank, self.next_rank],
+                    microbatch_id=microbatch_id,
+                    direction=direction,
                 )
                 _, output_tensor_grad, _ = self._communicate(
                     tensor_send_next=None,
@@ -527,7 +531,7 @@ class P2PCommunicator:
         return output_tensor_grads
 
     @nvtx_decorator()
-    def send_forward(self, output_tensors, is_last_stage: bool) -> None:
+    def send_forward(self, output_tensors, is_last_stage: bool, microbatch_id=None, direction='fwd') -> None:
         """Send tensor to next rank in pipeline (forward send)."""
         config = self.config
         if not isinstance(output_tensors, list):
@@ -543,6 +547,8 @@ class P2PCommunicator:
                     collective_type='PP_Send',
                     bytes=_tensor_bytes(output_tensor),
                     group_ranks=[current_rank, self.next_rank],
+                    microbatch_id=microbatch_id,
+                    direction=direction,
                 )
                 self._communicate(
                     tensor_send_next=output_tensor,
@@ -555,7 +561,7 @@ class P2PCommunicator:
                     config.timers('forward-send').stop()
 
     @nvtx_decorator()
-    def send_backward(self, input_tensor_grads, is_first_stage: bool) -> None:
+    def send_backward(self, input_tensor_grads, is_first_stage: bool, microbatch_id=None, direction='bwd') -> None:
         """Send tensor to previous rank in pipeline (backward send)."""
         if not isinstance(input_tensor_grads, list):
             input_tensor_grads = [input_tensor_grads]
@@ -570,6 +576,8 @@ class P2PCommunicator:
                     collective_type='PP_Send',
                     bytes=_tensor_bytes(input_tensor_grad),
                     group_ranks=[self.prev_rank, current_rank],
+                    microbatch_id=microbatch_id,
+                    direction=direction,
                 )
                 self._communicate(
                     tensor_send_next=None,
