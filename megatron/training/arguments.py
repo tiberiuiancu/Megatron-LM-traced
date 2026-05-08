@@ -2841,6 +2841,8 @@ def _add_distributed_args(parser):
                        help='Global rank for fake process group (overrides RANK env var).')
     group.add_argument('--trace-dir', type=str, default='./traces',
                        help='Directory to save execution traces.')
+    group.add_argument('--trace-warmup-iters', type=int, default=5,
+                       help='Number of warmup iterations before collecting execution traces.')
     return parser
 
 

@@ -1836,7 +1836,13 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
     args = get_args()
     timers = get_timers()
     tracer = get_tracer()
-    trace_enabled = tracer is not None and getattr(args, 'fake_process_group', False)
+    trace_warmup = getattr(args, 'trace_warmup_iters', 0)
+    trace_enabled = (
+        tracer is not None
+        and getattr(args, 'fake_process_group', False)
+        and iteration is not None
+        and iteration >= trace_warmup
+    )
     if trace_enabled:
         tracer.start_iteration()
 
