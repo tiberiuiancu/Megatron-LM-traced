@@ -582,7 +582,7 @@ class DistributedDataParallel(_BaseDataParallel):
                 name="DistributedDataParallel.start_grad_sync",
                 collective_type=(
                     "ReduceScatter"
-                    if self.ddp_config.use_distributed_optimizer and not force_all_reduce
+                    if self.ddp_config.use_distributed_optimizer and not self.force_all_reduce
                     else "AllReduce"
                 ),
                 num_bytes=sum(
