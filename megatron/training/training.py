@@ -1870,11 +1870,13 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
     try:
         while rerun_state_machine.should_run_forward_backward(data_iterator):
             # Set grad to zero.
+            print(f"[MEM LOG] Before zero_grad: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
             for model_chunk in model:
                 model_chunk.zero_grad_buffer()
                 # If saving main_grads in this iteration, then all-reduce instead of reduce-scatter.
                 model_chunk.force_all_reduce = save_wgrads_in_this_iteration
             optimizer.zero_grad()
+            print(f"[MEM LOG] After zero_grad: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
 
             if has_nvidia_modelopt:
                 # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
@@ -1905,6 +1907,7 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                             optim_instance._copy_main_params_to_param_buffer()
 
             # Forward pass.
+            print(f"[MEM LOG] Before forward_backward_func: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
             if save_activations_in_this_iteration:
                 enable_activation_logging(model, args.save)
             if save_tpe_in_this_iteration:
@@ -1923,6 +1926,7 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                 adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
                 force_all_reduce=save_wgrads_in_this_iteration,
             )
+            print(f"[MEM LOG] After forward_backward_func: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
             if save_activations_in_this_iteration:
                 save_activations(iteration + 1)
                 disable_activation_logging()
@@ -1980,9 +1984,10 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
         unwrapped_model.cancel_gradients_last_layer(args.curr_iteration)
 
     # Update parameters.
-
+    print(f"[MEM LOG] Before optimizer.step: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
     timers('optimizer', log_level=1).start(barrier=args.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+    print(f"[MEM LOG] After optimizer.step: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
 
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
