@@ -247,10 +247,11 @@ def forward_step(data_iterator, model: GPTModel, return_schedule_plan: bool = Fa
         vp_stage = get_attr_wrapped_model(model, "vp_stage")
         tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = get_batch(data_iterator, vp_stage)
     timers('batch-generator').stop()
-    print(f"[BATCH SHAPES] tokens={tokens.shape} labels={labels.shape} loss_mask={loss_mask.shape} "
-          f"attention_mask={attention_mask.shape if attention_mask is not None else None} "
-          f"position_ids={position_ids.shape if position_ids is not None else None} "
-          f"packed={packed_seq_params is not None}", flush=True)
+    if tokens is not None:
+        print(f"[BATCH SHAPES] tokens={tokens.shape} labels={labels.shape} loss_mask={loss_mask.shape} "
+              f"attention_mask={attention_mask.shape if attention_mask is not None else None} "
+              f"position_ids={position_ids.shape if position_ids is not None else None} "
+              f"packed={packed_seq_params is not None}", flush=True)
 
     with stimer:
         if args.use_legacy_models:
