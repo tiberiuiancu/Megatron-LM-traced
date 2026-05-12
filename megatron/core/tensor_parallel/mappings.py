@@ -464,6 +464,7 @@ class _AllToAll(torch.autograd.Function):
         if world_size == 1:
             return input
         if torch.distributed.is_initialized() and torch.distributed.get_backend() == 'fake':
+            _record_collective("_AllToAll", "AllToAll", input, group)
             return input
 
         input = input.contiguous()
