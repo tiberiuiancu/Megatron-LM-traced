@@ -463,9 +463,6 @@ class _AllToAll(torch.autograd.Function):
         # Bypass the function if we are using only 1 GPU.
         if world_size == 1:
             return input
-        if torch.distributed.is_initialized() and torch.distributed.get_backend() == 'fake':
-            _record_collective("_AllToAll", "AllToAll", input, group)
-            return input
 
         input = input.contiguous()
         if output_split_sizes is None:
