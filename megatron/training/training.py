@@ -1867,74 +1867,85 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
         else:
             print(f"[_finish_and_save_trace] SKIPPED: trace_enabled={trace_enabled}", flush=True)
 
-    while rerun_state_machine.should_run_forward_backward(data_iterator):
-        # Set grad to zero.
-        for model_chunk in model:
-            model_chunk.zero_grad_buffer()
-            # If saving main_grads in this iteration, then all-reduce instead of reduce-scatter.
-            model_chunk.force_all_reduce = save_wgrads_in_this_iteration
-        optimizer.zero_grad()
+    try:
+        while rerun_state_machine.should_run_forward_backward(data_iterator):
+            # Set grad to zero.
+            for model_chunk in model:
+                model_chunk.zero_grad_buffer()
+                # If saving main_grads in this iteration, then all-reduce instead of reduce-scatter.
+                model_chunk.force_all_reduce = save_wgrads_in_this_iteration
+            optimizer.zero_grad()
 
-        if has_nvidia_modelopt:
-            # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-            adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-                model,
+            if has_nvidia_modelopt:
+                # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
+                adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+                    model,
+                    seq_length=args.seq_length,
+                    micro_batch_size=args.micro_batch_size,
+                    decoder_seq_length=args.decoder_seq_length,
+                )
+            else:
+                adjust_tensor_shapes_fn = None
+
+            # For the mxfp8_param with reuse_grad_buf_for_mxfp8_param_ag and dp_ag_overlap,
+            # we need to call the _copy_main_params_to_param_buffer() after the grad buffer
+            # is zeroed by zero_grad_buffer() because param and grad buffer are shared.
+            #
+            # However, we should skip this on the first iteration when forward_pre_hook is disabled,
+            # because:
+            # 1. The first iteration's params are already in param.data (from init or checkpoint).
+            # 2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
+            #    so the main grads will be polluted by the main params.
+            if args.reuse_grad_buf_for_mxfp8_param_ag and args.overlap_param_gather:
+                # Check if forward_pre_hook is enabled by checking if hooks are registered.
+                forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
+                if forward_pre_hook_enabled:
+                    for optim_instance in optimizer.chained_optimizers:
+                        if isinstance(optim_instance, DistributedOptimizer):
+                            optim_instance._copy_main_params_to_param_buffer()
+
+            # Forward pass.
+            if save_activations_in_this_iteration:
+                enable_activation_logging(model, args.save)
+            if save_tpe_in_this_iteration:
+                enable_tokens_per_expert_logging(model, args.save)
+            if save_dgrads_in_this_iteration:
+                enable_dgrad_logging(model, args.save)
+            losses_reduced = forward_backward_func(
+                forward_step_func=forward_step_func,
+                data_iterator=data_iterator,
+                model=model,
+                num_microbatches=get_num_microbatches(),
                 seq_length=args.seq_length,
                 micro_batch_size=args.micro_batch_size,
                 decoder_seq_length=args.decoder_seq_length,
+                forward_only=False,
+                adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+                force_all_reduce=save_wgrads_in_this_iteration,
             )
-        else:
-            adjust_tensor_shapes_fn = None
+            if save_activations_in_this_iteration:
+                save_activations(iteration + 1)
+                disable_activation_logging()
+            if save_tpe_in_this_iteration:
+                save_tokens_per_expert(iteration + 1)
+                disable_tokens_per_expert_logging()
+            if save_dgrads_in_this_iteration:
+                save_dgrads(iteration + 1)
+                disable_dgrad_logging()
 
-        # For the mxfp8_param with reuse_grad_buf_for_mxfp8_param_ag and dp_ag_overlap,
-        # we need to call the _copy_main_params_to_param_buffer() after the grad buffer
-        # is zeroed by zero_grad_buffer() because param and grad buffer are shared.
-        #
-        # However, we should skip this on the first iteration when forward_pre_hook is disabled,
-        # because:
-        # 1. The first iteration's params are already in param.data (from init or checkpoint).
-        # 2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
-        #    so the main grads will be polluted by the main params.
-        if args.reuse_grad_buf_for_mxfp8_param_ag and args.overlap_param_gather:
-            # Check if forward_pre_hook is enabled by checking if hooks are registered.
-            forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
-            if forward_pre_hook_enabled:
-                for optim_instance in optimizer.chained_optimizers:
-                    if isinstance(optim_instance, DistributedOptimizer):
-                        optim_instance._copy_main_params_to_param_buffer()
+            # Reset force_all_reduce field.
+            for model_chunk in model:
+                model_chunk.force_all_reduce = False
 
-        # Forward pass.
-        if save_activations_in_this_iteration:
-            enable_activation_logging(model, args.save)
-        if save_tpe_in_this_iteration:
-            enable_tokens_per_expert_logging(model, args.save)
-        if save_dgrads_in_this_iteration:
-            enable_dgrad_logging(model, args.save)
-        losses_reduced = forward_backward_func(
-            forward_step_func=forward_step_func,
-            data_iterator=data_iterator,
-            model=model,
-            num_microbatches=get_num_microbatches(),
-            seq_length=args.seq_length,
-            micro_batch_size=args.micro_batch_size,
-            decoder_seq_length=args.decoder_seq_length,
-            forward_only=False,
-            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
-            force_all_reduce=save_wgrads_in_this_iteration,
-        )
-        if save_activations_in_this_iteration:
-            save_activations(iteration + 1)
-            disable_activation_logging()
-        if save_tpe_in_this_iteration:
-            save_tokens_per_expert(iteration + 1)
-            disable_tokens_per_expert_logging()
-        if save_dgrads_in_this_iteration:
-            save_dgrads(iteration + 1)
-            disable_dgrad_logging()
-
-        # Reset force_all_reduce field.
-        for model_chunk in model:
-            model_chunk.force_all_reduce = False
+    except torch.cuda.OutOfMemoryError as exc:
+        print(f"[OOM Caught] {exc}", flush=True)
+        if getattr(args, 'memory_snapshot_path', None) is not None:
+            snapshot = torch.cuda.memory._snapshot()
+            from pickle import dump
+            with open(args.memory_snapshot_path, 'wb') as f:
+                dump(snapshot, f)
+            print(f"[OOM Snapshot Saved] {args.memory_snapshot_path}", flush=True)
+        raise
 
     def _save_state_dict(attr_name, label):
         # Collect state_dict of the given attribute for each parameter.
