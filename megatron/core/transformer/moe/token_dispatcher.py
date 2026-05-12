@@ -681,6 +681,9 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             self.input_splits,
             use_nccl_stream=self.use_nccl_stream,
         )
+        print(f"[A2A DISPATCH] output_splits={self.output_splits.tolist()} input_splits={self.input_splits.tolist()} "
+              f"output_sum={self.output_splits.sum().item()} input_sum={self.input_splits.sum().item()} "
+              f"token_shape={permutated_local_input_tokens.shape}", flush=True)
         # Move the shared experts fc1 right after the tokens A2A, to prevent the probs A2A
         # block the launch of fc1 GEMM when CUDA_DEVICE_MAX_CONNECTIONS=1.
         # Forward launch order: tokens A2A -> shared experts fc1 -> probs A2A
