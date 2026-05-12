@@ -460,10 +460,10 @@ class _AllToAll(torch.autograd.Function):
         ctx.use_nccl_stream = use_nccl_stream
 
         world_size = group.size()
-        print(f"[A2A DEBUG] group_size={world_size} rank={group.rank()} input_shape={input.shape} "
-              f"output_split_sizes={output_split_sizes} input_split_sizes={input_split_sizes}", flush=True)
         # Bypass the function if we are using only 1 GPU.
         if world_size == 1:
+            return input
+        if torch.distributed.is_initialized() and torch.distributed.get_backend() == 'fake':
             return input
 
         input = input.contiguous()
