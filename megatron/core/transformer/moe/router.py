@@ -670,6 +670,30 @@ class TopKRouter(Router):
         # Optionally apply expert bias
         self._apply_expert_bias(routing_map, padding_mask=padding_mask)
 
+        # === BEGIN HARDCODED EQUAL TOKEN DISTRIBUTION ===
+        # Override routing_map and probs to distribute tokens evenly across experts,
+        # regardless of the router output. This is a diagnostic hard-code to test
+        # whether token imbalance causes activation memory spikes.
+        num_tokens = routing_map.size(0)
+        num_experts = self.config.num_moe_experts
+        topk = self.topk
+        device = routing_map.device
+
+        token_indices = torch.arange(num_tokens, device=device)
+        expert_offsets = torch.arange(topk, device=device)
+        expert_indices = (token_indices.unsqueeze(1) * topk + expert_offsets.unsqueeze(0)) % num_experts
+
+        new_routing_map = torch.zeros_like(routing_map)
+        new_routing_map.scatter_(1, expert_indices, True)
+
+        new_probs = torch.zeros_like(probs)
+        uniform_score = 1.0 / topk
+        new_probs.scatter_(1, expert_indices, uniform_score)
+
+        routing_map = new_routing_map
+        probs = new_probs
+        # === END HARDCODED EQUAL TOKEN DISTRIBUTION ===
+
         return probs, routing_map
 
     def reset_global_aux_loss_tracker(self):
