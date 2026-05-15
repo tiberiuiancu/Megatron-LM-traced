@@ -1,7 +1,6 @@
 # Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 """Pretrain utilities."""
-print("[training.py] MODULE LOADED — instrumented version", flush=True)
 import time
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
@@ -844,7 +843,6 @@ def pretrain(
     store=None,
     inprocess_call_wrapper: Optional[CallWrapper] = None,
 ):
-    print("[pretrain] ENTERED", flush=True)
     """Main training program.
 
     This function will run the followings in the order provided:
@@ -1192,9 +1190,7 @@ def pretrain(
 
         iteration = 0
         args.curr_iteration = iteration
-        print(f"[pretrain] do_train={getattr(args, 'do_train', None)} train_iters={getattr(args, 'train_iters', None)}", flush=True)
         if args.do_train and (args.train_iters or 0) > 0:
-            print("[pretrain] CALLING train()", flush=True)
             iteration, num_floating_point_operations_so_far = train(
                 forward_step_func,
                 model,
@@ -1832,7 +1828,6 @@ def dummy_train_step(data_iterator):
 
 def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_scheduler, config, forward_backward_func, iteration=None):
     """Single training step."""
-    print(f"[train_step] ENTERED iteration={iteration}", flush=True)
     args = get_args()
     timers = get_timers()
     tracer = get_tracer()
@@ -1859,18 +1854,13 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                                      (iteration + 1) % args.save_dgrads_interval == 0)
 
     def _finish_and_save_trace():
-        print(f"[_finish_and_save_trace] trace_enabled={trace_enabled} tracer={tracer} fake_pg={getattr(args, 'fake_process_group', False)}", flush=True)
         if trace_enabled:
             trace = tracer.finish_iteration()
-            print(f"[_finish_and_save_trace] trace events={len(trace.get('events', []))}", flush=True)
             _save_trace(trace, args)
-        else:
-            print(f"[_finish_and_save_trace] SKIPPED: trace_enabled={trace_enabled}", flush=True)
 
     try:
         while rerun_state_machine.should_run_forward_backward(data_iterator):
             # Set grad to zero.
-            print(f"[MEM LOG] Before zero_grad: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
             torch.cuda.reset_peak_memory_stats()
             for model_chunk in model:
                 model_chunk.zero_grad_buffer()
@@ -1878,7 +1868,6 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                 model_chunk.force_all_reduce = save_wgrads_in_this_iteration
             optimizer.zero_grad()
             peak = torch.cuda.max_memory_allocated() / 1024**3
-            print(f"[MEM LOG] After zero_grad: {torch.cuda.memory_allocated() / 1024**3:.2f} GB (peak={peak:.2f} GB)", flush=True)
 
             if has_nvidia_modelopt:
                 # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
@@ -1909,7 +1898,6 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                             optim_instance._copy_main_params_to_param_buffer()
 
             # Forward pass.
-            print(f"[MEM LOG] Before forward_backward_func: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
             torch.cuda.reset_peak_memory_stats()
             if save_activations_in_this_iteration:
                 enable_activation_logging(model, args.save)
@@ -1930,7 +1918,6 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                 force_all_reduce=save_wgrads_in_this_iteration,
             )
             peak = torch.cuda.max_memory_allocated() / 1024**3
-            print(f"[MEM LOG] After forward_backward_func: {torch.cuda.memory_allocated() / 1024**3:.2f} GB (peak={peak:.2f} GB)", flush=True)
             if save_activations_in_this_iteration:
                 save_activations(iteration + 1)
                 disable_activation_logging()
@@ -1946,13 +1933,11 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                 model_chunk.force_all_reduce = False
 
     except torch.cuda.OutOfMemoryError as exc:
-        print(f"[OOM Caught] {exc}", flush=True)
         if getattr(args, 'memory_snapshot_path', None) is not None:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
             with open(args.memory_snapshot_path, 'wb') as f:
                 dump(snapshot, f)
-            print(f"[OOM Snapshot Saved] {args.memory_snapshot_path}", flush=True)
         raise
 
     def _save_state_dict(attr_name, label):
@@ -1988,12 +1973,10 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
         unwrapped_model.cancel_gradients_last_layer(args.curr_iteration)
 
     # Update parameters.
-    print(f"[MEM LOG] Before optimizer.step: {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
     torch.cuda.reset_peak_memory_stats()
     timers('optimizer', log_level=1).start(barrier=args.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
     peak = torch.cuda.max_memory_allocated() / 1024**3
-    print(f"[MEM LOG] After optimizer.step: {torch.cuda.memory_allocated() / 1024**3:.2f} GB (peak={peak:.2f} GB)", flush=True)
 
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
@@ -2074,9 +2057,7 @@ def _save_trace(trace, args):
     stage = args.rank // ranks_per_stage
     out_dir = getattr(args, 'trace_dir', './traces')
     path = os.path.join(out_dir, f'trace_pp_stage_{stage}.json')
-    print(f"[_save_trace] rank={args.rank} stage={stage} path={path} events={len(trace.get('events', []))}", flush=True)
     serialize_trace(trace, path)
-    print(f"[_save_trace] done: {path}", flush=True)
 
 
 def training_log(
@@ -2762,7 +2743,6 @@ def train(
     non_loss_data_func,
     inference_model=None,
 ):
-    print("[train] ENTERED", flush=True)
     """Training function: run train_step desired number of times, run validation, checkpoint."""
     args = get_args()
     timers = get_timers()
@@ -3039,7 +3019,6 @@ def train(
 
     # Run training iterations till done.
     buffered_rollouts = None
-    print(f"[train] about to enter loop iteration={iteration} train_iters={args.train_iters}", flush=True)
     while iteration < args.train_iters:
         if (args.profile 
             and (len(args.profile_ranks) == 0 or
@@ -3161,7 +3140,6 @@ def train(
             num_zeros_in_grad = 0
             max_attention_logit = None
         else:
-            print(f"[pretrain] about to call train_step iteration={iteration} skip_train={args.skip_train}", flush=True)
             ft_integration.on_training_step_start()
             (
                 loss_dict,
@@ -3772,7 +3750,6 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
     is_distributed = getattr(build_train_valid_test_datasets_provider, "is_distributed", False)
 
     # Construct the data pipeline
-    print(f"[build_train_valid_test_data_loaders] tp_rank={mpu.get_tensor_model_parallel_rank()} fake_pg={args.fake_process_group} is_distributed={is_distributed}", flush=True)
     if is_distributed or mpu.get_tensor_model_parallel_rank() == 0 or args.fake_process_group:
 
         # Build datasets and dataloders.
@@ -3789,12 +3766,10 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
             # Build datasets.
             train_ds, valid_ds, test_ds = build_train_valid_test_datasets(build_train_valid_test_datasets_provider)
             valid_ds = [valid_ds] if not isinstance(valid_ds, list) else valid_ds
-            print(f"[pretrain] skip_train={args.skip_train} train_ds={train_ds is not None}", flush=True)
             if args.skip_train:
                 train_dataloader = None
             else:
                 train_dataloader = build_pretraining_data_loader(train_ds, consumed_train_samples_in_current_phase)
-                print(f"[pretrain] train_dataloader={train_dataloader is not None}", flush=True)
             valid_dataloaders = []
             for valid_d in valid_ds:
                 if args.skip_train or args.full_validation:
@@ -3832,7 +3807,6 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
 
 def build_train_valid_test_data_iterators(build_train_valid_test_datasets_provider):
     """Build pretraining data iterators."""
-    print("[build_train_valid_test_data_iterators] ENTERED", flush=True)
 
     args = get_args()
 
@@ -3883,10 +3857,6 @@ def build_train_valid_test_data_iterators(build_train_valid_test_datasets_provid
                 valid_data_iterators = [None] * len(valid_dataloaders)
             else:
                 valid_dl_type = "cyclic" if args.full_validation else dl_type
-                print(
-                    f"[VALID DATA LOADER LENGTHS] "
-                    ", ".join(f"{idx}: {len(dl)}" for idx, dl in enumerate(valid_dataloaders))
-                )
                 valid_data_iterators = [
                     _get_iterator(valid_dl_type, dl) for dl in valid_dataloaders
                 ]
