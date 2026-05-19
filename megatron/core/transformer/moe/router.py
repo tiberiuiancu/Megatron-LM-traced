@@ -678,26 +678,28 @@ class TopKRouter(Router):
         topk = self.topk
         device = routing_map.device
 
-        new_routing_map = torch.zeros_like(routing_map)
-        new_probs = torch.zeros_like(probs)
-
         biased_count = int(num_tokens * 0.2)
+        remaining_count = num_tokens - biased_count
 
-        # Biased tokens (first 20%): always include expert 0
-        for i in range(biased_count):
-            new_routing_map[i, 0] = True
-            new_probs[i, 0] = 0.6
-            for j in range(1, topk):
-                expert_idx = ((i * (topk - 1) + j - 1) % (num_experts - 1)) + 1
-                new_routing_map[i, expert_idx] = True
-                new_probs[i, expert_idx] = 0.4 / (topk - 1)
+        expert_indices = torch.zeros(num_tokens, topk, dtype=torch.long, device=device)
 
-        # Remaining 80%: equal distribution across all experts
-        for i in range(biased_count, num_tokens):
-            for j in range(topk):
-                expert_idx = (i * topk + j) % num_experts
-                new_routing_map[i, expert_idx] = True
-                new_probs[i, expert_idx] = 1.0 / topk
+        if biased_count > 0 and topk > 1:
+            slots = torch.arange(biased_count * (topk - 1), device=device)
+            expert_indices[:biased_count, 1:] = (
+                slots.view(biased_count, topk - 1) % (num_experts - 1)
+            ) + 1
+
+        if remaining_count > 0:
+            slots = torch.arange(remaining_count * topk, device=device)
+            expert_indices[biased_count:, :] = slots.view(remaining_count, topk) % num_experts
+
+        new_routing_map = torch.zeros_like(routing_map)
+        new_routing_map.scatter_(1, expert_indices, True)
+
+        new_probs = torch.full_like(probs, 1.0 / topk)
+        if biased_count > 0 and topk > 1:
+            new_probs[:biased_count, 0] = 0.6
+            new_probs[:biased_count, 1:] = 0.4 / (topk - 1)
 
         routing_map = new_routing_map
         probs = new_probs
