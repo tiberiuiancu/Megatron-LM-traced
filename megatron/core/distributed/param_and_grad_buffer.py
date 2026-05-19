@@ -250,10 +250,17 @@ class _ParamAndGradBucketGroup:
         Reset metadata in bucket group in preparation for the next iteration of training.
         """
         if self.is_first_batch and len(self.per_param_grad_ready_counts) > 0:
-            # Record golden per_param_grad_ready_counts.
-            assert len(self.per_param_grad_ready_counts) == len(self.params)
-            self.golden_per_param_grad_ready_counts = self.per_param_grad_ready_counts
-            self.is_first_batch = False
+            if torch.distributed.is_initialized() and torch.distributed.get_backend() == 'fake':
+                # Under fake PG, all_to_all is a no-op so only local expert params get
+                # gradients. Record the actual partial set as the golden expectation so
+                # grad sync is still triggered once all *available* grads are ready.
+                self.golden_per_param_grad_ready_counts = self.per_param_grad_ready_counts
+                self.is_first_batch = False
+            else:
+                # Record golden per_param_grad_ready_counts.
+                assert len(self.per_param_grad_ready_counts) == len(self.params)
+                self.golden_per_param_grad_ready_counts = self.per_param_grad_ready_counts
+                self.is_first_batch = False
         self.per_param_grad_ready_counts = {}
         self.is_last_microbatch = True
 
@@ -750,7 +757,13 @@ class _ParamAndGradBucketGroup:
             # If all params in bucket group have grads available, issue communication call.
             if not self.is_first_batch:
                 if self.per_param_grad_ready_counts == self.golden_per_param_grad_ready_counts:
-                    assert len(self.per_param_grad_ready_counts) == len(self.params)
+                    # Under fake PG, all_to_all is a no-op so only local expert params get
+                    # gradients; the golden count is partial, so skip the strict length check.
+                    if (
+                        not torch.distributed.is_initialized()
+                        or torch.distributed.get_backend() != 'fake'
+                    ):
+                        assert len(self.per_param_grad_ready_counts) == len(self.params)
                     self.start_grad_sync(force_all_reduce=force_all_reduce)
 
 
