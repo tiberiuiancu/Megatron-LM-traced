@@ -670,29 +670,38 @@ class TopKRouter(Router):
         # Optionally apply expert bias
         self._apply_expert_bias(routing_map, padding_mask=padding_mask)
 
-        # === BEGIN HARDCODED EQUAL TOKEN DISTRIBUTION ===
-        # Override routing_map and probs to distribute tokens evenly across experts,
-        # regardless of the router output. This is a diagnostic hard-code to test
-        # whether token imbalance causes activation memory spikes.
+        # === BEGIN HARDCODED BIASED TOKEN DISTRIBUTION ===
+        # Route 20% of tokens to the first expert (expert 0) to simulate
+        # asymmetric load. Remaining tokens are distributed evenly.
         num_tokens = routing_map.size(0)
         num_experts = self.config.num_moe_experts
         topk = self.topk
         device = routing_map.device
 
-        token_indices = torch.arange(num_tokens, device=device)
-        expert_offsets = torch.arange(topk, device=device)
-        expert_indices = (token_indices.unsqueeze(1) * topk + expert_offsets.unsqueeze(0)) % num_experts
-
         new_routing_map = torch.zeros_like(routing_map)
-        new_routing_map.scatter_(1, expert_indices, True)
-
         new_probs = torch.zeros_like(probs)
-        uniform_score = 1.0 / topk
-        new_probs.scatter_(1, expert_indices, uniform_score)
+
+        biased_count = int(num_tokens * 0.2)
+
+        # Biased tokens (first 20%): always include expert 0
+        for i in range(biased_count):
+            new_routing_map[i, 0] = True
+            new_probs[i, 0] = 0.6
+            for j in range(1, topk):
+                expert_idx = ((i * (topk - 1) + j - 1) % (num_experts - 1)) + 1
+                new_routing_map[i, expert_idx] = True
+                new_probs[i, expert_idx] = 0.4 / (topk - 1)
+
+        # Remaining 80%: equal distribution across all experts
+        for i in range(biased_count, num_tokens):
+            for j in range(topk):
+                expert_idx = (i * topk + j) % num_experts
+                new_routing_map[i, expert_idx] = True
+                new_probs[i, expert_idx] = 1.0 / topk
 
         routing_map = new_routing_map
         probs = new_probs
-        # === END HARDCODED EQUAL TOKEN DISTRIBUTION ===
+        # === END HARDCODED BIASED TOKEN DISTRIBUTION ===
 
         return probs, routing_map
 
