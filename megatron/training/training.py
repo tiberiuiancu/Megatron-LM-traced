@@ -913,7 +913,11 @@ def pretrain(
     timers = get_timers()
 
     if getattr(args, 'fake_process_group', False):
-        set_tracer(CudaEventTracer())
+        set_tracer(CudaEventTracer(
+            rank=args.rank,
+            world_size=args.world_size,
+            pipeline_stage=mpu.get_pipeline_model_parallel_rank(),
+        ))
 
     if args.fine_grained_activation_offloading:
         from megatron.core.pipeline_parallel.utils import (
