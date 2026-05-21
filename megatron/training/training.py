@@ -1977,6 +1977,8 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
         unwrapped_model.cancel_gradients_last_layer(args.curr_iteration)
 
     # Update parameters.
+    if tracer is not None:
+        tracer.record_slot_begin(0, 'step', mpu.get_pipeline_model_parallel_rank())
     torch.cuda.reset_peak_memory_stats()
     timers('optimizer', log_level=1).start(barrier=args.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
@@ -1989,6 +1991,8 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
         log_max_attention_logit = clip_qk(model, log_max_only=not args.qk_clip)
 
     timers('optimizer').stop()
+    if tracer is not None:
+        tracer.record_slot_end(0, 'step', mpu.get_pipeline_model_parallel_rank())
 
     # Checkpoint params with parameter names.
     if save_params_in_this_iteration:
