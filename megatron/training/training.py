@@ -2057,12 +2057,8 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
 
 
 def _save_trace(trace, args):
-    dp = (args.world_size // args.pipeline_model_parallel_size // args.expert_model_parallel_size //
-          args.tensor_model_parallel_size // args.context_parallel_size)
-    ranks_per_stage = args.world_size // args.pipeline_model_parallel_size // dp
-    stage = args.rank // ranks_per_stage
     out_dir = getattr(args, 'trace_dir', './traces')
-    path = os.path.join(out_dir, f'trace_pp_stage_{stage}.json')
+    path = os.path.join(out_dir, f"trace_rank_{args.rank}.json")
     serialize_trace(trace, path)
 
 
