@@ -125,6 +125,12 @@ class CudaEventTracer:
         trace["events"] = events
         return trace
 
+    def save(self, trace_dir: str) -> None:
+        os.makedirs(trace_dir, exist_ok=True)
+        path = os.path.join(trace_dir, f"trace_rank_{self.rank}.json")
+        trace = self.finish_iteration()
+        serialize_trace(trace, path)
+
 
 _tracer: CudaEventTracer | None = None
 
