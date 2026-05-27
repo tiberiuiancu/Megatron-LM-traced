@@ -51,7 +51,7 @@ def model_provider(
             # snapshot right after an OOM happened
             print('saving allocated state during OOM')
 
-            filename = f"oom_rank-{torch.distributed.get_rank()}_{args.memory_snapshot_path}"
+            filename = args.memory_snapshot_path
             torch.cuda.memory._dump_snapshot(filename)
 
         torch._C._cuda_attach_out_of_memory_observer(oom_observer)
