@@ -642,6 +642,7 @@ def forward_backward_no_pipelining(
     ), "adjust_tensor_shapes_fn is not supported for non-pipeline-parallel schedule"
 
     config = get_model_config(model)
+    tracer = get_tracer()
     if config.timers is not None:
         config.timers('forward-backward', log_level=1).start(barrier=config.barrier_with_L1_time)
 
@@ -693,6 +694,8 @@ def forward_backward_no_pipelining(
     else:
         with no_sync_func():
             for i in range(num_microbatches - 1):
+                if tracer is not None:
+                    tracer.record_slot_begin(i, 'fwd', 0)
                 output_tensor, num_tokens = forward_step(
                     forward_step_func,
                     data_iterator,
@@ -706,11 +709,19 @@ def forward_backward_no_pipelining(
                     is_first_microbatch=check_first_val_step(first_val_step, forward_only, i == 0),
                     current_microbatch=i,
                 )
+                if tracer is not None:
+                    tracer.record_slot_end(i, 'fwd', 0)
                 total_num_tokens += num_tokens
                 if not forward_only:
+                    if tracer is not None:
+                        tracer.record_slot_begin(i, 'bwd', 0)
                     backward_step(input_tensor, output_tensor, output_tensor_grad, config)
+                    if tracer is not None:
+                        tracer.record_slot_end(i, 'bwd', 0)
         # Run computation for last microbatch out of context handler (want to
         # synchronize gradients).
+        if tracer is not None:
+            tracer.record_slot_begin(num_microbatches - 1, 'fwd', 0)
         output_tensor, num_tokens = forward_step(
             forward_step_func,
             data_iterator,
@@ -726,11 +737,17 @@ def forward_backward_no_pipelining(
             ),
             current_microbatch=num_microbatches - 1,
         )
+        if tracer is not None:
+            tracer.record_slot_end(num_microbatches - 1, 'fwd', 0)
 
         total_num_tokens += num_tokens
 
         if not forward_only:
+            if tracer is not None:
+                tracer.record_slot_begin(num_microbatches - 1, 'bwd', 0)
             backward_step(input_tensor, output_tensor, output_tensor_grad, config)
+            if tracer is not None:
+                tracer.record_slot_end(num_microbatches - 1, 'bwd', 0)
 
     if config.finalize_model_grads_func is not None and not forward_only:
         # Finalize model grads (perform full grad all-reduce / reduce-scatter for
