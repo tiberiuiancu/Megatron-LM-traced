@@ -10,6 +10,11 @@ try:
 except ImportError:  # pragma: no cover - torch is optional in this environment
     torch = None
 
+try:
+    from codecarbon import EmissionsTracker
+except ImportError:  # pragma: no cover - codecarbon is optional
+    EmissionsTracker = None
+
 
 def serialize_trace(trace: dict, path: str) -> None:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
     os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
@@ -31,6 +36,7 @@ class CudaEventTracer:
         self._events: list[tuple[str, float | Any, dict[str, Any]]] = []
         self._event_pool: list[Any] = []
         self._total_flops: float | None = None
+        self._energy_tracker: Any | None = None
 
     def set_total_flops(self, total_flops: float) -> None:
         self._total_flops = total_flops
@@ -45,13 +51,25 @@ class CudaEventTracer:
     def start_iteration(self):
         self._events = []
         self._iteration_started = True
+        self._energy_tracker = None
+        if EmissionsTracker is not None:
+            self._energy_tracker = EmissionsTracker(measure_power_secs=1)
+            self._energy_tracker.start()
         if self._use_cuda_events:
             self._start_event = torch.cuda.Event(enable_timing=True)
             self._start_event.record()
         else:
             self._start_time = perf_counter()
 
-    def record_collective(self, name, collective_type, bytes, group_ranks, microbatch_id=None, direction=None):
+    def record_collective(
+        self,
+        name,
+        collective_type,
+        bytes,
+        group_ranks,
+        microbatch_id=None,
+        direction=None,
+    ):
         event = self._new_event()
         metadata = {
             "name": name,
@@ -123,6 +141,19 @@ class CudaEventTracer:
         events.sort(key=lambda item: item["timestamp_ms"])
         self._iteration_started = False
         trace["events"] = events
+
+        if self._energy_tracker is not None:
+            try:
+                self._energy_tracker.stop()
+                energy_kwh = self._energy_tracker.final_emissions_data.energy_consumed
+                co2eq_kg = self._energy_tracker.final_emissions
+                trace["energy_kwh"] = energy_kwh
+                trace["co2eq_kg"] = co2eq_kg
+            except Exception:
+                pass
+            finally:
+                self._energy_tracker = None
+
         return trace
 
     def save(self, trace_dir: str) -> None:

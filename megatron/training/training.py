@@ -1843,7 +1843,11 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
         and iteration >= trace_warmup
     )
     if trace_enabled:
-        tracer.start_iteration()
+        try:
+            tracer.start_iteration()
+        except Exception as e:
+            logger.warning(f"Tracer start_iteration failed: {e}. Continuing without tracing.")
+            trace_enabled = False
 
     rerun_state_machine = get_rerun_state_machine()
     save_params_in_this_iteration = (args.save_params_interval is not None and
@@ -1859,8 +1863,11 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
 
     def _finish_and_save_trace():
         if trace_enabled:
-            trace = tracer.finish_iteration()
-            _save_trace(trace, args)
+            try:
+                trace = tracer.finish_iteration()
+                _save_trace(trace, args)
+            except Exception as e:
+                logger.warning(f"Tracer finish_iteration/save failed: {e}. Trace not saved.")
 
     try:
         while rerun_state_machine.should_run_forward_backward(data_iterator):
