@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from time import perf_counter
 from typing import Any
@@ -150,7 +151,7 @@ class CudaEventTracer:
                 trace["energy_kwh"] = energy_kwh
                 trace["co2eq_kg"] = co2eq_kg
             except Exception:
-                pass
+                logging.warning("CodeCarbon energy tracking failed", exc_info=True)
             finally:
                 self._energy_tracker = None
 
