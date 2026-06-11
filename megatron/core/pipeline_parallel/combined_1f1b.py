@@ -391,6 +391,13 @@ def combined_forward_backward_step(
     outer_fp8_context = get_fp8_context(config) if use_outer_fp8_context else nullcontext()
 
     b_grad = b_output_tensor_grad[0] if b_model else None
+
+    if f_schedule_plan is not None:
+        f_schedule_plan.state.microbatch_id = current_microbatch if current_microbatch is not None else -1
+        f_schedule_plan.state.direction = "fwd"
+    if b_schedule_plan is not None:
+        b_schedule_plan.state.direction = "bwd"
+
     # combined forward and backward model chunk execution of two micro-batches
     with context_manager and outer_fp8_context:  # autocast context and delayed fp8 context
         # For GPT models, it calls common::TransformerModelChunkSchedulePlan.run(),

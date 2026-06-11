@@ -24,6 +24,7 @@ from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from megatron.core.transformer.moe.moe_utils import ProcessGroupCollection
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.typed_torch import apply_module
+from megatron.core.instrumentation import get_tracer
 from megatron.core.utils import (
     is_te_min_version,
     is_torch_min_version,
@@ -210,17 +211,43 @@ class SharedExpertMLP(MLP):
             sharded_state_dict.update(sub_sd)
         return sharded_state_dict
 
+    def _tracer(self):
+        return get_tracer()
+
+    def _record_stream_wait(self, from_stream, to_stream):
+        tracer = self._tracer()
+        if tracer is not None:
+            tracer.record_stream_wait(from_stream, to_stream)
+
+    def _record_shared_expert_node(self, name, event_type):
+        tracer = self._tracer()
+        if tracer is None:
+            return
+        if event_type == "begin":
+            tracer.record_node_begin(
+                name=name,
+                stream_type="shared_expert",
+                layer_id=-1,
+                microbatch_id=-1,
+                direction="",
+                event_id=id(self.stream),
+            )
+        elif event_type == "end":
+            tracer.record_node_end(
+                name=name,
+                stream_type="shared_expert",
+                layer_id=-1,
+                microbatch_id=-1,
+                direction="",
+                event_id=id(self.stream),
+            )
+
     def wait_current_stream(self):
-        """Wait for the current stream to complete."""
         self.stream.wait_stream(torch.cuda.current_stream())
+        self._record_stream_wait("comp", "shared_expert")
 
     @overlap_state_check(SharedExpertState.IDLE, SharedExpertState.PRE_FORWARD_COMM_DONE)
     def pre_forward_comm(self, input, wait_current_stream=True):
-        """
-        All Gather for SP before forward.
-        This function is used to overlap shared experts with the dispatcher.
-        It is only useful when --moe-shared-expert-overlap is set and may be changed.
-        """
         if wait_current_stream:
             self.wait_current_stream()
         with torch.cuda.stream(self.stream):
@@ -239,13 +266,8 @@ class SharedExpertMLP(MLP):
         SharedExpertState.PRE_FORWARD_COMM_DONE, SharedExpertState.FC1_FORWARD_DONE
     )
     def linear_fc1_forward_and_act(self, overlapped_comm_output=None):
-        """
-        Do Linear FC1 and activation function forward.
-        This function is used to overlap shared experts with the dispatcher.
-        It is only useful when --moe-shared-expert-overlap is set and may be changed.
-        """
+        self._record_shared_expert_node("shared_expert_fc1", "begin")
         with torch.cuda.stream(self.stream):
-            # [s, b, 4 * h/p]
             intermediate_parallel, bias_parallel = apply_module(self.linear_fc1)(
                 self.cached_fc1_input
             )
@@ -286,38 +308,26 @@ class SharedExpertMLP(MLP):
                     intermediate_parallel = self.activation_func(intermediate_parallel)
 
             self.cached_fc2_input = intermediate_parallel
-        # Tensor sequence number is used to control the backward order.
-        # Decrease the sequence number of the expert output to make the comm launched first
-        # in the backward order.
+        self._record_shared_expert_node("shared_expert_fc1", "end")
         if overlapped_comm_output is not None and overlapped_comm_output.grad_fn is not None:
             target_sequence_nr = overlapped_comm_output.grad_fn._sequence_nr() - 1
             set_tensor_grad_fn_sequence_sr(intermediate_parallel, target_sequence_nr)
-            # Make sure the shared expert fc1 backward is launched after the routed fc1 backward
             self.cached_fc2_input = _BackwardStreamWait.apply(intermediate_parallel, self.stream)
 
     @overlap_state_check(SharedExpertState.FC1_FORWARD_DONE, SharedExpertState.FC2_FORWARD_DONE)
     def linear_fc2_forward(self, overlapped_comm_output=None):
-        """
-        Do Linear FC2 forward.
-        This function is used to overlap shared experts with the dispatcher.
-        It is only useful when --moe-shared-expert-overlap is set and may be changed.
-        """
+        self._record_shared_expert_node("shared_expert_fc2", "begin")
         if overlapped_comm_output is not None:
             set_tensor_grad_fn_sequence_sr(overlapped_comm_output, torch.iinfo(torch.int).max)
         with torch.cuda.stream(self.stream):
-            # [s, b, h]
             self.cached_fc2_output, _ = apply_module(self.linear_fc2)(self.cached_fc2_input)
             self.cached_fc2_input = None
+        self._record_shared_expert_node("shared_expert_fc2", "end")
 
     @overlap_state_check(
         SharedExpertState.FC2_FORWARD_DONE, SharedExpertState.POST_FORWARD_COMM_DONE
     )
     def post_forward_comm(self):
-        """
-        Reduce scatter for SP after forward.
-        This function is used to overlap shared experts with the dispatcher.
-        It is only useful when --moe-shared-expert-overlap is set and may be changed.
-        """
         with torch.cuda.stream(self.stream):
             if self.config.sequence_parallel:
                 self.cached_output = reduce_scatter_to_sequence_parallel_region(
@@ -332,11 +342,6 @@ class SharedExpertMLP(MLP):
 
     @overlap_state_check(SharedExpertState.POST_FORWARD_COMM_DONE, SharedExpertState.IDLE)
     def get_output(self):
-        """
-        Gets the module forward output.
-        This function is used to overlap shared experts with the dispatcher.
-        It is only useful when --moe-shared-expert-overlap is set and may be changed.
-        """
         with torch.cuda.stream(self.stream):
             if self.use_shared_expert_gate:
                 assert self.gate_score is not None
@@ -346,6 +351,7 @@ class SharedExpertMLP(MLP):
                 output = self.cached_output
             self.cached_output = None
         torch.cuda.current_stream().wait_stream(self.stream)
+        self._record_stream_wait("shared_expert", "comp")
         return output
 
 

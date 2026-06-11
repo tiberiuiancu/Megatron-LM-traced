@@ -251,20 +251,9 @@ class TransformerLayerNode(ScheduleNode):
         name="default",
         bwd_dw_callables=None,
         extra_args={},
+        layer_id: int = -1,
+        stream_type: str = "",
     ):
-        """Initialize a transformer layer node.
-
-        Args:
-            stream (torch.cuda.Stream): CUDA stream for execution
-            event (torch.cuda.Event): Synchronization event
-            layer_state (TransformerLayerState): State shared within a layer
-            chunk_state (TransformerChunkState): State shared within a chunk
-            submodule (function): The submodule contain forward and dw function
-            it's the per_batch_state_context, o.w. nullcontext
-            name (str): Node name, also used to determine memory strategy
-            bwd_dw_callables (list): List of weight gradient functions for the layer.
-            extra_args (dict): Extra arguments for the node: is_moe, config.
-        """
         # determine whether to free input memory
         config = extra_args.get("config", None)
         assert config is not None, "model config must be passed to TransformerLayerNode."
@@ -280,6 +269,8 @@ class TransformerLayerNode(ScheduleNode):
             weak_method(self.backward_impl),
             free_input=free_input,
             name=name,
+            layer_id=layer_id,
+            stream_type=stream_type,
         )
         self.layer_state = layer_state
         self.chunk_state = chunk_state

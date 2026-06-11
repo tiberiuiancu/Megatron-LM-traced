@@ -133,8 +133,10 @@ class TransformerLayerSchedulePlan:
         extra_args["delay_wgrad_compute"] = self.layer.config.delay_wgrad_compute
         extra_args["is_mtp"] = is_mtp
 
+        layer_id = getattr(self.layer, "layer_number", -1)
+
         # wrapper to help create TransformerLayerNode
-        def create_node(stream, module, name):
+        def create_node(stream, module, name, stream_type=""):
             bwd_dw_callables = bwd_dw_callable_map.get(name, None)
             return TransformerLayerNode(
                 stream,
@@ -145,6 +147,8 @@ class TransformerLayerSchedulePlan:
                 name=name,
                 bwd_dw_callables=bwd_dw_callables,
                 extra_args=extra_args,
+                layer_id=layer_id,
+                stream_type=stream_type,
             )
 
         (
@@ -157,18 +161,18 @@ class TransformerLayerSchedulePlan:
 
         # Create nodes for different operations in the layer
         # Each node type has a predefined name that determines its memory strategy
-        self.attn = create_node(comp_stream, attn_module, "attn")
-        self.mlp = create_node(comp_stream, mlp_module, "mlp")
+        self.attn = create_node(comp_stream, attn_module, "attn", "comp")
+        self.mlp = create_node(comp_stream, mlp_module, "mlp", "comp")
         if is_moe:
-            self.moe_dispatch = create_node(comm_stream, moe_dispatch_module, "moe_dispatch")
-            self.moe_combine = create_node(comm_stream, moe_combine_module, "moe_combine")
+            self.moe_dispatch = create_node(comm_stream, moe_dispatch_module, "moe_dispatch", "comm")
+            self.moe_combine = create_node(comm_stream, moe_combine_module, "moe_combine", "comm")
         else:
             self.moe_dispatch = NoopScheduleNode()
             self.moe_combine = NoopScheduleNode()
 
         if is_mtp:
             self.mtp_post_process = create_node(
-                comp_stream, mtp_post_process_module, "mtp_post_process"
+                comp_stream, mtp_post_process_module, "mtp_post_process", "comp"
             )
         else:
             self.mtp_post_process = NoopScheduleNode()

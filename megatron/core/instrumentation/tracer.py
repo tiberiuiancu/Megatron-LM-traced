@@ -105,6 +105,63 @@ class CudaEventTracer:
         else:
             self._events.append((event_type, perf_counter(), metadata))
 
+    def record_node_begin(
+        self,
+        name,
+        stream_type,
+        layer_id,
+        microbatch_id,
+        direction,
+        event_id,
+    ):
+        self._record_node_event(
+            "node_begin", name, stream_type, layer_id, microbatch_id, direction, event_id
+        )
+
+    def record_node_end(
+        self,
+        name,
+        stream_type,
+        layer_id,
+        microbatch_id,
+        direction,
+        event_id,
+    ):
+        self._record_node_event(
+            "node_end", name, stream_type, layer_id, microbatch_id, direction, event_id
+        )
+
+    def _record_node_event(
+        self, event_type, name, stream_type, layer_id, microbatch_id, direction, event_id
+    ):
+        event = self._new_event()
+        metadata = {
+            "name": name,
+            "stream_type": stream_type,
+            "layer_id": layer_id,
+            "microbatch_id": microbatch_id,
+            "direction": direction,
+            "event_id": event_id,
+        }
+        if self._use_cuda_events:
+            event.record()
+            self._events.append((event_type, event, metadata))
+        else:
+            self._events.append((event_type, perf_counter(), metadata))
+
+    def record_stream_wait(self, from_stream, to_stream, event_id=None):
+        event = self._new_event()
+        metadata = {
+            "from_stream": from_stream,
+            "to_stream": to_stream,
+            "event_id": event_id,
+        }
+        if self._use_cuda_events:
+            event.record()
+            self._events.append(("stream_wait", event, metadata))
+        else:
+            self._events.append(("stream_wait", perf_counter(), metadata))
+
     def finish_iteration(self) -> dict:
         trace: dict[str, Any] = {
             "trace_format_version": "1.0",

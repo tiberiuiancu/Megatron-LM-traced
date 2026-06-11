@@ -8,6 +8,7 @@ from typing import Callable, Optional
 import torch
 from torch.autograd import Variable
 
+from megatron.core.instrumentation import get_tracer
 from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
@@ -156,6 +157,8 @@ class ScheduleNode:
         backward_func: Optional[Callable] = None,
         free_input: bool = False,
         name: str = "schedule_node",
+        layer_id: int = -1,
+        stream_type: str = "",
     ):
         """Initialize a schedule node.
 
@@ -173,6 +176,8 @@ class ScheduleNode:
             free_input (bool): Flag to indicate if the input should be freed after the
                 forward pass.
             name (str): Name of the node for debugging purposes.
+            layer_id (int): The layer number this node belongs to.
+            stream_type (str): The type of stream this node runs on ('comp', 'comm', etc.).
         """
         self.name = name
         self.forward_func = forward_func
@@ -180,6 +185,8 @@ class ScheduleNode:
         self.stream = stream
         self.event = event
         self.free_input = free_input
+        self.layer_id = layer_id
+        self.stream_type = stream_type
         self.inputs = None
         self.outputs = None
         self.delay_grads_release = False
@@ -299,6 +306,7 @@ class ScheduleNode:
         self.event.wait(self.stream)
         if name:
             nvtx_range_push(name)
+        self._maybe_record_node(name, "begin")
         try:
             with torch.cuda.stream(self.stream):
                 yield
@@ -306,6 +314,35 @@ class ScheduleNode:
             if name:
                 nvtx_range_pop(name)
             self.event.record(self.stream)
+            self._maybe_record_node(name, "end")
+
+    def _maybe_record_node(self, name, event_type):
+        tracer = get_tracer()
+        if tracer is None:
+            return
+        microbatch_id = -1
+        direction = ""
+        if hasattr(self, "chunk_state") and self.chunk_state is not None:
+            microbatch_id = getattr(self.chunk_state, "microbatch_id", -1)
+            direction = getattr(self.chunk_state, "direction", "")
+        if event_type == "begin":
+            tracer.record_node_begin(
+                name=self.name,
+                stream_type=self.stream_type,
+                layer_id=self.layer_id,
+                microbatch_id=microbatch_id,
+                direction=direction,
+                event_id=id(self.event),
+            )
+        elif event_type == "end":
+            tracer.record_node_end(
+                name=self.name,
+                stream_type=self.stream_type,
+                layer_id=self.layer_id,
+                microbatch_id=microbatch_id,
+                direction=direction,
+                event_id=id(self.event),
+            )
 
     def _release_state(self):
         """Clear the state of the node"""
