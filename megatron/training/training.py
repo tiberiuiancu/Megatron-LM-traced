@@ -1952,6 +1952,14 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
             from pickle import dump
             with open(args.memory_snapshot_path, 'wb') as f:
                 dump(snapshot, f)
+        trace_dir = getattr(args, 'trace_dir', None)
+        if trace_dir is not None:
+            oom_path = os.path.join(trace_dir, ".OOM")
+            try:
+                with open(oom_path, "w") as f:
+                    f.write(str(exc))
+            except Exception:
+                pass
         raise
 
     def _save_state_dict(attr_name, label):
