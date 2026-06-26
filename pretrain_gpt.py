@@ -415,11 +415,23 @@ if __name__ == "__main__":
         extra_args_provider=add_modelopt_args if has_nvidia_modelopt else None,
         args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
     )
-    pretrain(
-        train_valid_test_datasets_provider,
-        partial(model_provider, gpt_builder),
-        ModelType.encoder_or_decoder,
-        forward_step,
-        store=store,
-        get_embedding_ranks=get_embedding_ranks,
-    )
+    try:
+        pretrain(
+            train_valid_test_datasets_provider,
+            partial(model_provider, gpt_builder),
+            ModelType.encoder_or_decoder,
+            forward_step,
+            store=store,
+            get_embedding_ranks=get_embedding_ranks,
+        )
+    except Exception as exc:
+        import os
+        is_oom = isinstance(exc, torch.cuda.OutOfMemoryError) or "out of memory" in str(exc).lower()
+        if is_oom and args.trace_dir is not None:
+            oom_path = os.path.join(args.trace_dir, ".OOM")
+            try:
+                with open(oom_path, "w") as f:
+                    f.write(str(exc))
+            except Exception:
+                pass
+        raise
