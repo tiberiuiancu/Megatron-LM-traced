@@ -1946,14 +1946,15 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
             for model_chunk in model:
                 model_chunk.force_all_reduce = False
 
-    except torch.cuda.OutOfMemoryError as exc:
-        if getattr(args, 'memory_snapshot_path', None) is not None:
+    except Exception as exc:
+        is_oom_error = isinstance(exc, torch.cuda.OutOfMemoryError) or "out of memory" in str(exc).lower()
+        if is_oom_error and getattr(args, 'memory_snapshot_path', None) is not None:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
             with open(args.memory_snapshot_path, 'wb') as f:
                 dump(snapshot, f)
         trace_dir = getattr(args, 'trace_dir', None)
-        if trace_dir is not None:
+        if trace_dir is not None and is_oom_error:
             oom_path = os.path.join(trace_dir, ".OOM")
             try:
                 with open(oom_path, "w") as f:
