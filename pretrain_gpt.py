@@ -426,6 +426,7 @@ if __name__ == "__main__":
         )
     except Exception as exc:
         import os
+        import sys
         exc_text = repr(exc).lower()
         is_oom = (
             isinstance(exc, torch.cuda.OutOfMemoryError)
@@ -434,6 +435,8 @@ if __name__ == "__main__":
             or ("cuda" in exc_text and "memory" in exc_text and "allocate" in exc_text)
         )
         trace_dir = getattr(args, 'trace_dir', None)
+        sys.stderr.write(f"[pretrain_gpt] exception type={type(exc).__module__}.{type(exc).__name__} is_oom={is_oom} trace_dir={trace_dir}\n")
+        sys.stderr.flush()
         if trace_dir is not None:
             try:
                 debug_path = os.path.join(trace_dir, ".DEBUG")
@@ -442,13 +445,19 @@ if __name__ == "__main__":
                     f.write(f"is_oom={is_oom}\n")
                     f.write(f"trace_dir={trace_dir}\n")
                     f.write(f"repr={repr(exc)}\n")
-            except Exception:
-                pass
+                sys.stderr.write(f"[pretrain_gpt] wrote .DEBUG to {debug_path}\n")
+                sys.stderr.flush()
+            except Exception as write_exc:
+                sys.stderr.write(f"[pretrain_gpt] failed to write .DEBUG: {write_exc}\n")
+                sys.stderr.flush()
             if is_oom:
                 oom_path = os.path.join(trace_dir, ".OOM")
                 try:
                     with open(oom_path, "w") as f:
                         f.write(str(exc))
-                except Exception:
-                    pass
+                    sys.stderr.write(f"[pretrain_gpt] wrote .OOM to {oom_path}\n")
+                    sys.stderr.flush()
+                except Exception as write_exc:
+                    sys.stderr.write(f"[pretrain_gpt] failed to write .OOM: {write_exc}\n")
+                    sys.stderr.flush()
         raise
