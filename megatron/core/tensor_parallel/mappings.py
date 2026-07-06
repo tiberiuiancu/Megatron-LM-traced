@@ -2,7 +2,7 @@
 
 import torch
 
-from megatron.core.instrumentation import get_tracer
+from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.parallel_state import get_global_memory_buffer
 from megatron.core.utils import get_tensor_model_parallel_group_if_none, is_torch_min_version
 
@@ -33,17 +33,6 @@ def _group_ranks(group):
             pass
 
     return list(range(torch.distributed.get_world_size(group)))
-
-
-def _record_collective(name, collective_type, tensor, group):
-    tracer = get_tracer()
-    if tracer is not None:
-        tracer.record_collective(
-            name=name,
-            collective_type=collective_type,
-            bytes=tensor.numel() * tensor.element_size(),
-            group_ranks=_group_ranks(group),
-        )
 
 
 def _reduce(input_, group):

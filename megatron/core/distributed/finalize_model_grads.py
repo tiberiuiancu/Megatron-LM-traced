@@ -13,6 +13,7 @@ try:
 except ImportError:
     HAVE_DTENSOR = False
 
+from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.pipeline_parallel.utils import (
     get_pp_last_rank,
     is_pp_first_stage,
@@ -119,6 +120,7 @@ def _allreduce_conditional_embedding_grads(
             # All-reduce the gradient on the first VPP rank.
             grads = [param_grad[0] for _, param_grad in grads_dict.items()]
             coalesced = _flatten_dense_tensors(grads)
+            _record_collective("finalize_grads_pp", "AllReduce", coalesced, pp_group)
             torch.distributed.all_reduce(coalesced, group=pp_group)
             for buf, synced in zip(grads, _unflatten_dense_tensors(coalesced, grads)):
                 buf.copy_(synced)
@@ -255,6 +257,7 @@ def _allreduce_embedding_grad(
         # When the embedding is frozen, the grad is None.
         if grad is None and skip_if_none:
             return
+        _record_collective("finalize_grads_embd", "AllReduce", grad, embd_group)
         torch.distributed.all_reduce(grad, group=embd_group)
         setattr(weight, grad_attr, _reshard_if_dtensor(grad, orig_grad))
 
@@ -377,6 +380,7 @@ def _allreduce_non_tensor_model_parallel_grads(
     ):
         if grads:
             coalesced = _flatten_dense_tensors(grads)
+            _record_collective("finalize_grads_tp", "AllReduce", coalesced, tp_group)
             torch.distributed.all_reduce(coalesced, op=all_reduce_op, group=tp_group)
             for param, buf, synced in zip(
                 params, grads, _unflatten_dense_tensors(coalesced, grads)
@@ -491,9 +495,11 @@ def finalize_model_grads(
         # to the other ranks in the pipeline parallel group.
         assert not isinstance(pp_group, list)
         last_rank = get_pp_last_rank(pp_group)
+        _record_collective("finalize_grads_num_tokens_bcast", "Broadcast", num_tokens, pp_group)
         torch.distributed.broadcast(num_tokens, src=last_rank, group=pp_group)
 
         # all-reduce across DP ranks.
+        _record_collective("finalize_grads_num_tokens_dp", "AllReduce", num_tokens, dp_cp_group)
         torch.distributed.all_reduce(num_tokens, group=dp_cp_group)
         for model_chunk in model:
             if num_tokens > 0:

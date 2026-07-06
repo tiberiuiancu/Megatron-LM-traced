@@ -51,7 +51,7 @@ from typing import Any, Optional, Dict
 
 import torch.distributed
 
-from megatron.core.instrumentation import get_tracer, set_tracer
+from megatron.core.instrumentation import get_tracer, record_collective as _record_collective, set_tracer
 from megatron.core.instrumentation.tracer import CudaEventTracer, serialize_trace
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import get_canonical_lr_for_logging
@@ -2052,6 +2052,7 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
                 # there is one dict per microbatch. in new reporting, we average
                 # over the total number of tokens across the global batch.
                 val = torch.vstack(val).sum(dim=0)
+                _record_collective("loss_reduce", "AllReduce", val, mpu.get_data_parallel_group(with_context_parallel=True))
                 torch.distributed.all_reduce(
                     val,
                     group=mpu.get_data_parallel_group(with_context_parallel=True)
