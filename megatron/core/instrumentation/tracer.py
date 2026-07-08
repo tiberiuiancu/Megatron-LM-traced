@@ -70,6 +70,7 @@ class CudaEventTracer:
         group_ranks,
         microbatch_id=None,
         direction=None,
+        async_op=False,
     ):
         event = self._new_event()
         metadata = {
@@ -79,6 +80,7 @@ class CudaEventTracer:
             "group_ranks": group_ranks,
             "microbatch_id": microbatch_id,
             "direction": direction,
+            "async_op": async_op,
         }
         if self._use_cuda_events:
             event.record()

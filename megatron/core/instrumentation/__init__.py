@@ -18,7 +18,7 @@ def _group_ranks(group):
     return list(range(torch.distributed.get_world_size(group)))
 
 
-def record_collective(name, collective_type, tensor, group):
+def record_collective(name, collective_type, tensor, group, async_op=False):
     tracer = get_tracer()
     if tracer is not None:
         tracer.record_collective(
@@ -26,6 +26,7 @@ def record_collective(name, collective_type, tensor, group):
             collective_type=collective_type,
             bytes=tensor.numel() * tensor.element_size(),
             group_ranks=_group_ranks(group),
+            async_op=async_op,
         )
 
 
@@ -49,7 +50,7 @@ def patch_torch_distributed():
                         break
             tensor = args[tensor_index] if tensor_index < len(args) else None
             if tensor is not None and hasattr(tensor, "numel") and hasattr(tensor, "element_size"):
-                record_collective(name, collective_type, tensor, group)
+                record_collective(name, collective_type, tensor, group, async_op=kwargs.get("async_op", False))
             return fn(*args, **kwargs)
         return wrapper
 
