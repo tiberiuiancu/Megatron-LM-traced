@@ -503,14 +503,6 @@ class DistributedDataParallel(_BaseDataParallel):
             )
             if communication_group is None:
                 communication_group = bucket_group.data_parallel_group
-                name="DistributedDataParallel.start_param_sync",
-                collective_type="AllGather",
-                num_bytes=sum(
-                    bucket.param_data.numel() * bucket.param_data.element_size()
-                    for bucket in bucket_group.buckets
-                ),
-                group=communication_group,
-            )
             bucket_group.start_param_sync(force_sync=force_sync)
 
             if not self.ddp_config.overlap_param_gather:
@@ -564,18 +556,6 @@ class DistributedDataParallel(_BaseDataParallel):
             )
             if communication_group is None:
                 communication_group = bucket_group.data_parallel_group
-                name="DistributedDataParallel.start_grad_sync",
-                collective_type=(
-                    "ReduceScatter"
-                    if self.ddp_config.use_distributed_optimizer and not self.force_all_reduce
-                    else "AllReduce"
-                ),
-                num_bytes=sum(
-                    bucket.grad_data.numel() * bucket.grad_data.element_size()
-                    for bucket in bucket_group.buckets
-                ),
-                group=communication_group,
-            )
             bucket_group.start_grad_sync()
 
     def finish_grad_sync(self, force_all_reduce: Optional[bool] = False):
