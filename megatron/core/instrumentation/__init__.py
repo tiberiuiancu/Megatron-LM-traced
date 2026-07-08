@@ -66,11 +66,36 @@ def patch_torch_distributed():
     for base_name, ct, ti in [
         ("_all_gather_base", "AllGather", 1),
         ("_reduce_scatter_base", "ReduceScatter", 1),
+        ("all_gather_into_tensor", "AllGather", 1),
+        ("reduce_scatter_tensor", "ReduceScatter", 1),
         ("broadcast", "Broadcast", 0),
     ]:
         fn = getattr(dist, base_name, None)
         if fn is not None:
             _orig[base_name] = fn
             setattr(dist, base_name, _wrap(base_name, ct, fn, ti))
+
+    # Megatron captures these functions into module-level variables at import
+    # time (e.g. dist_all_gather_func = torch.distributed.all_gather_into_tensor).
+    # Patching torch.distributed alone is not enough; we must rebind those
+    # module-level references too.
+    import importlib
+    for mod_name in [
+        "megatron.core.tensor_parallel.mappings",
+        "megatron.core.tensor_parallel.layers",
+        "megatron.core.tensor_parallel.utils",
+        "megatron.core.distributed.param_and_grad_buffer",
+        "megatron.core.transformer.multi_token_prediction",
+        "megatron.core.utils",
+        "megatron.core.timers",
+    ]:
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:
+            continue
+        if hasattr(mod, "dist_all_gather_func"):
+            mod.dist_all_gather_func = dist.all_gather_into_tensor
+        if hasattr(mod, "dist_reduce_scatter_func"):
+            mod.dist_reduce_scatter_func = dist.reduce_scatter_tensor
 
     _patched = True
