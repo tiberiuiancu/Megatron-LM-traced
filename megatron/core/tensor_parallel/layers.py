@@ -14,7 +14,6 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from typing_extensions import override
 
-from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.parallel_state import (
     get_global_memory_buffer,
@@ -363,7 +362,6 @@ class LinearWithFrozenWeight(torch.autograd.Function):
 
         if ctx.allreduce_dgrad:
             # All-reduce. Note: here async and sync are effectively the same.
-            _record_collective("frozen_weight_allreduce_dgrad", "AllReduce", grad_input, ctx.tp_group)
             torch.distributed.all_reduce(grad_input, group=ctx.tp_group)
 
         return grad_input, None, None, None, None
@@ -480,7 +478,6 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
             dim_size[0] = dim_size[0] * tp_group.size()
 
             all_gather_buffer = get_global_memory_buffer().get_tensor(dim_size, input.dtype, "mpu")
-            _record_collective("sp_all_gather_fwd", "AllGather", input, tp_group)
             dist_all_gather_func(all_gather_buffer, input, group=tp_group)
             total_input = all_gather_buffer
         else:
@@ -520,7 +517,6 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
                 all_gather_buffer = get_global_memory_buffer().get_tensor(
                     dim_size, input.dtype, "mpu"
                 )
-                _record_collective("sp_all_gather_bwd", "AllGather", input, tp_group)
                 handle = dist_all_gather_func(
                     all_gather_buffer, input, group=tp_group, async_op=True
                 )
@@ -543,7 +539,6 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
 
         if ctx.allreduce_dgrad:
             # Asynchronous all-reduce
-            _record_collective("allreduce_dgrad", "AllReduce", grad_input, tp_group)
             handle = torch.distributed.all_reduce(grad_input, group=tp_group, async_op=True)
             # Here we rely on CUDA_DEVICE_MAX_CONNECTIONS=1 to ensure that the
             # all-reduce is scheduled before the weight gradient computation
@@ -555,7 +550,6 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
                 dim_size, dtype=input.dtype, device=torch.cuda.current_device(), requires_grad=False
             )
             # reduce_scatter
-            _record_collective("sp_reduce_scatter_bwd", "ReduceScatter", grad_input, tp_group)
             handle = dist_reduce_scatter_func(
                 sub_grad_input, grad_input, group=tp_group, async_op=True
             )

@@ -7,7 +7,6 @@ from typing import List, Optional, Union
 import torch
 from torch import inf
 
-from megatron.core.instrumentation import record_collective as _record_collective
 
 try:
     from transformer_engine.pytorch.optimizers import (
@@ -98,11 +97,9 @@ def get_grad_norm_fp32(
         total_norm_cuda = torch.tensor([float(total_norm)], dtype=torch.float, device='cuda')
         # Take max across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
         if data_parallel_group:
-            _record_collective("clip_grads_norm_inf_dp", "AllReduce", total_norm_cuda, data_parallel_group)
             torch.distributed.all_reduce(
                 total_norm_cuda, op=torch.distributed.ReduceOp.MAX, group=data_parallel_group
             )
-        _record_collective("clip_grads_norm_inf_mp", "AllReduce", total_norm_cuda, grad_stats_parallel_group)
         torch.distributed.all_reduce(
             total_norm_cuda, op=torch.distributed.ReduceOp.MAX, group=grad_stats_parallel_group
         )
@@ -134,11 +131,9 @@ def get_grad_norm_fp32(
 
         # Sum across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
         if data_parallel_group:
-            _record_collective("clip_grads_norm_2_dp", "AllReduce", total_norm, data_parallel_group)
             torch.distributed.all_reduce(
                 total_norm, op=torch.distributed.ReduceOp.SUM, group=data_parallel_group
             )
-        _record_collective("clip_grads_norm_2_mp", "AllReduce", total_norm, grad_stats_parallel_group)
         torch.distributed.all_reduce(
             total_norm, op=torch.distributed.ReduceOp.SUM, group=grad_stats_parallel_group
         )
@@ -267,12 +262,10 @@ def count_zeros_fp32(
 
     # Sum across all data-parallel GPUs if using FSDP.
     if data_parallel_group:
-        _record_collective("clip_grads_zeros_dp", "AllReduce", total_num_zeros, data_parallel_group)
         torch.distributed.all_reduce(
             total_num_zeros, op=torch.distributed.ReduceOp.SUM, group=data_parallel_group
         )
     # Sum across all model-parallel GPUs.
-    _record_collective("clip_grads_zeros_mp", "AllReduce", total_num_zeros, grad_stats_parallel_group)
     torch.distributed.all_reduce(
         total_num_zeros, op=torch.distributed.ReduceOp.SUM, group=grad_stats_parallel_group
     )

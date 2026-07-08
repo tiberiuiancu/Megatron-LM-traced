@@ -916,6 +916,8 @@ def pretrain(
     timers = get_timers()
 
     if getattr(args, 'fake_process_group', False):
+        from megatron.core.instrumentation import patch_torch_distributed
+        patch_torch_distributed()
         set_tracer(CudaEventTracer(
             rank=args.rank,
             world_size=args.world_size,

@@ -13,7 +13,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import torch
 import torch.nn.functional
 
-from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.utils import log_single_rank
 
 from ..dist_checkpointing.optimizer import KEEP_VARS_HINT
@@ -1250,12 +1249,10 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
                             if not use_gloo_comm:
                                 send_tensor = send_tensor.cuda()
                             if return_on_all_ranks:
-                                _record_collective("distrib_optimizer_all_gather", "AllGather", send_tensor, data_parallel_group)
                                 torch.distributed.all_gather(
                                     recv_tensors, send_tensor, data_parallel_group
                                 )
                             else:
-                                _record_collective("distrib_optimizer_gather", "AllGather", send_tensor, data_parallel_group)
                                 torch.distributed.gather(
                                     send_tensor,
                                     recv_tensors,
@@ -2102,7 +2099,6 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
                             send_tensors = None
 
                         # Scatter.
-                        _record_collective("distrib_optimizer_scatter_params", "ReduceScatter", recv_tensor, data_parallel_group_gloo)
                         torch.distributed.scatter(
                             recv_tensor,
                             send_tensors,
@@ -2215,7 +2211,6 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
                             send_tensors = None
 
                         # Scatter.
-                        _record_collective("distrib_optimizer_scatter_states", "ReduceScatter", recv_tensor, data_parallel_group_gloo)
                         torch.distributed.scatter(
                             recv_tensor,
                             send_tensors,

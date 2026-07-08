@@ -2,7 +2,6 @@
 
 import torch
 
-from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.parallel_state import get_global_memory_buffer
 from megatron.core.utils import get_tensor_model_parallel_group_if_none, is_torch_min_version
 
@@ -44,7 +43,6 @@ def _reduce(input_, group):
         return input_
 
     # All-reduce.
-    _record_collective("_reduce", "AllReduce", input_, group)
     torch.distributed.all_reduce(input_.contiguous(), group=group)
 
     return input_
@@ -106,7 +104,6 @@ def _gather_along_last_dim(input_, group):
     dim_size[0] = dim_size[0] * world_size
 
     output = torch.empty(dim_size, dtype=input_.dtype, device=torch.cuda.current_device())
-    _record_collective("_gather_along_last_dim", "AllGather", input_, group)
     dist_all_gather_func(output, input_.contiguous(), group=group)
     tensor_list = output.chunk(world_size, dim=0)
     output = torch.cat(tensor_list, dim=-1).contiguous()
@@ -157,7 +154,6 @@ def _gather_along_first_dim(input_, group, output_split_sizes=None, use_global_b
             output = get_global_memory_buffer().get_tensor(dim_size, input_.dtype, "mpu")
         else:
             output = torch.empty(dim_size, dtype=input_.dtype, device=torch.cuda.current_device())
-        _record_collective("_gather_along_first_dim", "AllGather", input_, group)
         dist_all_gather_func(output, input_.contiguous(), group=group)
     else:
         dim_size[0] = sum(output_split_sizes)
@@ -166,7 +162,6 @@ def _gather_along_first_dim(input_, group, output_split_sizes=None, use_global_b
         else:
             output = torch.empty(dim_size, dtype=input_.dtype, device=torch.cuda.current_device())
         output_tensor_list = list(torch.split(output, output_split_sizes, dim=0))
-        _record_collective("_gather_along_first_dim", "AllGather", input_, group)
         torch.distributed.all_gather(output_tensor_list, input_, group=group)
 
     return output
@@ -199,7 +194,6 @@ def _reduce_scatter_along_first_dim(input_, group, input_split_sizes=None, use_g
             output = get_global_memory_buffer().get_tensor(dim_size, input_.dtype, "mpu")
         else:
             output = torch.empty(dim_size, dtype=input_.dtype, device=torch.cuda.current_device())
-        _record_collective("_reduce_scatter_along_first_dim", "ReduceScatter", input_, group)
         dist_reduce_scatter_func(output, input_.contiguous(), group=group)
     else:
         rank = group.rank()
@@ -211,7 +205,6 @@ def _reduce_scatter_along_first_dim(input_, group, input_split_sizes=None, use_g
             )
         else:
             output = torch.empty_like(input_tensor_list[rank])
-        _record_collective("_reduce_scatter_along_first_dim", "ReduceScatter", input_, group)
         torch.distributed.reduce_scatter(output, input_tensor_list, group=group)
     return output
 
@@ -465,7 +458,6 @@ class _AllToAll(torch.autograd.Function):
                 device=torch.cuda.current_device(),
             )
         if use_nccl_stream:
-            _record_collective("_AllToAll", "AllToAll", input, group)
             handle = torch.distributed.all_to_all_single(
                 output,
                 input,
@@ -476,7 +468,6 @@ class _AllToAll(torch.autograd.Function):
             )
             handle.wait()
         else:
-            _record_collective("_AllToAll", "AllToAll", input, group)
             torch.distributed.all_to_all_single(
                 output,
                 input,

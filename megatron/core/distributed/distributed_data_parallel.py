@@ -6,8 +6,6 @@ from typing import Optional
 
 import torch
 
-from megatron.core.instrumentation import get_tracer
-
 from ..config_logger import has_config_logger_enabled, log_config_to_disk
 from ..fp8_utils import is_float8tensor, post_all_gather_processing
 from ..optimizer.param_layout import FullParamLayout
@@ -35,17 +33,6 @@ def _group_ranks(group):
             pass
 
     return list(range(torch.distributed.get_world_size(group)))
-
-
-def _record_collective(name: str, collective_type: str, num_bytes: int, group) -> None:
-    tracer = get_tracer()
-    if tracer is not None:
-        tracer.record_collective(
-            name=name,
-            collective_type=collective_type,
-            bytes=num_bytes,
-            group_ranks=_group_ranks(group),
-        )
 
 
 class DistributedDataParallel(_BaseDataParallel):
@@ -516,7 +503,6 @@ class DistributedDataParallel(_BaseDataParallel):
             )
             if communication_group is None:
                 communication_group = bucket_group.data_parallel_group
-            _record_collective(
                 name="DistributedDataParallel.start_param_sync",
                 collective_type="AllGather",
                 num_bytes=sum(
@@ -578,7 +564,6 @@ class DistributedDataParallel(_BaseDataParallel):
             )
             if communication_group is None:
                 communication_group = bucket_group.data_parallel_group
-            _record_collective(
                 name="DistributedDataParallel.start_grad_sync",
                 collective_type=(
                     "ReduceScatter"

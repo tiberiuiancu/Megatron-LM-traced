@@ -4,7 +4,6 @@ from typing import Tuple
 
 import torch
 
-from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.parallel_state import (
     get_tensor_model_parallel_group,
     get_tensor_model_parallel_rank,
@@ -128,7 +127,6 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         vocab_parallel_logits, logits_max = VocabParallelCrossEntropy.calculate_logits_max(
             vocab_parallel_logits
         )
-        _record_collective("cross_entropy_logits_max", "AllReduce", logits_max, get_tensor_model_parallel_group())
         torch.distributed.all_reduce(
             logits_max, op=torch.distributed.ReduceOp.MAX, group=get_tensor_model_parallel_group()
         )
@@ -147,14 +145,12 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         )
 
         # All reduce is needed to get the chunks from other GPUs.
-        _record_collective("cross_entropy_predicted_logits", "AllReduce", predicted_logits, get_tensor_model_parallel_group())
         torch.distributed.all_reduce(
             predicted_logits,
             op=torch.distributed.ReduceOp.SUM,
             group=get_tensor_model_parallel_group(),
         )
 
-        _record_collective("cross_entropy_sum_exp_logits", "AllReduce", sum_exp_logits, get_tensor_model_parallel_group())
         torch.distributed.all_reduce(
             sum_exp_logits,
             op=torch.distributed.ReduceOp.SUM,

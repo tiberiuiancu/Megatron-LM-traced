@@ -17,7 +17,6 @@ from torch.distributed import _coalescing_manager
 import megatron.core.nccl_allocator as nccl_allocator
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.utils import log_single_rank
 
@@ -382,7 +381,6 @@ class _ParamAndGradBucketGroup:
                     local_slot_view.copy_(flat_local_params)
                 bucket.layerwise_gather_list = gather_list
 
-                _record_collective("param_buffer_all_gather", "AllGather", local_slot_view, group)
                 work = torch.distributed.all_gather(
                     gather_list, local_slot_view, group=group, async_op=async_op
                 )
@@ -622,7 +620,6 @@ class _ParamAndGradBucketGroup:
                         logger.info(
                             f"Performing reduction using all_reduce because {force_all_reduce=}"
                         )
-                    _record_collective("grad_buffer_all_reduce", "AllReduce", bucket.grad_data, communication_group)
                     torch.distributed.all_reduce(
                         bucket.grad_data, op=reduce_op, group=communication_group, async_op=async_op
                     )
@@ -649,7 +646,6 @@ class _ParamAndGradBucketGroup:
                         self.intra_distributed_optimizer_instance_rank
                     ]
 
-                    _record_collective("grad_buffer_inter_opt_all_reduce", "AllReduce", local_data_view, self.inter_distributed_optimizer_instance_group)
                     torch.distributed.all_reduce(
                         local_data_view,
                         op=reduce_op,

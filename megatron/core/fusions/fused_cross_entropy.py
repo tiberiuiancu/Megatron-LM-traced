@@ -4,7 +4,6 @@ from typing import Tuple
 
 import torch
 
-from megatron.core.instrumentation import record_collective as _record_collective
 from megatron.core.jit import jit_fuser
 from megatron.core.tensor_parallel.cross_entropy import VocabParallelCrossEntropy
 from megatron.core.tensor_parallel.utils import VocabUtility
@@ -92,7 +91,6 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         Forward implementation for the cross entropy loss.
         """
         vocab_parallel_logits, logits_max = calculate_logits_max(vocab_parallel_logits)
-        _record_collective("fused_cross_entropy_logits_max", "AllReduce", logits_max, tp_group)
         torch.distributed.all_reduce(logits_max, op=torch.distributed.ReduceOp.MAX, group=tp_group)
 
         # Get the partition's vocab indices
@@ -111,7 +109,6 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         # All reduce is needed to get the chunks from other GPUs.
         # In the fused case, tensors are batches to invoke a single
         # AllReduce call
-        _record_collective("fused_cross_entropy_sum", "AllReduce", predicted_logits_sum_exp_logits, tp_group)
         torch.distributed.all_reduce(
             predicted_logits_sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=tp_group
         )
